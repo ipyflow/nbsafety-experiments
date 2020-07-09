@@ -33,7 +33,7 @@ def main(args, conn):
         seen_repos.add(repo_id)
         logger.info("Working on entry %s", entry['html_url'])
         try:
-            subprocess.check_output(['wget', '-O', 'temp.sqlite', f'{entry["html_url"]}?raw=true'], stderr=subprocess.STDOUT)
+            subprocess.check_output(['wget', '-q', '-O', 'temp.sqlite', f'{entry["html_url"]}?raw=true'])
             curse = conn.cursor()
             curse.execute('attach "temp.sqlite" as t')
             curse.execute(f'insert into traces select {repo_id}, session, line, source from t.history')

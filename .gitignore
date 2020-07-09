@@ -1,0 +1,6 @@
+*.csv
+*.json
+*.sqlite
+**/*temp*
+traces*
+.ipynb_checkpoints/
