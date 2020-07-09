@@ -1,60 +1,108 @@
 #!/usr/bin/env python
+import argparse
+from collections import defaultdict
+import glob
 import json
+import logging
+import pathlib
+import re
+import sqlite3
 import subprocess
 import sys
 
-SESSION_START = '# + Cell 1\n'
-MAX_SESSIONS = 1
-MAX_REPOS = 100
+DEFAULT_MAX_SESSIONS = -1
+DEFAULT_NUM_REPOS = -1
+DEFAULT_MIN_CELLS_PER_SESSION = 10
+NB_TRACE_DIR = pathlib.Path('./traces')
+IMPORT_RE = re.compile(r'(^|\n) *(from|import) *(\w+)')
 
-def main():
-    with open('data.json') as f:
-        data = json.loads(f.read())
-    new_entries = []
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def get_imports(s):
+    return set(map(lambda m: m[2], IMPORT_RE.findall(s)))
+
+
+def make_session_filters(args, allowed_imports):
+    return [
+        lambda sess: 'spark' not in sess and 'SPARK' not in sess,
+        lambda sess: 'sklearn.datasets' in sess or 'uci.edu/ml' in sess,
+        lambda sess: len(sess.split('\n# @@ Cell')) >= args.min_cells_per_session,
+        # lambda sess: get_imports(sess).issubset(allowed_imports)
+    ]
+
+
+def main(args, conn):
+    all_imports = set()
+    per_repo_imports = defaultdict(set)
+    with open('allowed-imports.json') as f:
+        allowed_imports = set(json.loads(f.read())['allow_imports'])
+        session_filters = make_session_filters(args, allowed_imports)
     successes = 0
-    for entry in data:
-        print(entry)
+    NB_TRACE_DIR.mkdir(exist_ok=True)
+    curse = conn.cursor()
+    all_repos = curse.execute('select repo from traces')
+    all_repos = set(tup[0] for tup in all_repos)
+    curse.close()
+    total_unfiltered = 0
+    for repo_idx, repo in enumerate(all_repos):
+        logger.info(f'Working on entry {repo} ({repo_idx+1} of {len(all_repos)})')
         try:
-            subprocess.check_output(['wget', '-O', 'temp.sqlite', f'{entry["html_url"]}?raw=true'], stderr=subprocess.STDOUT)
-            subprocess.check_call('sqlite3 temp.sqlite \"select \'\n# + Cell \'|| line || char(10) || source || char(10) from history;\" > temp.py', shell=True)
-            with open('temp.py') as f:
-                sessions = f.read().split(SESSION_START)
-            sessions = map(lambda sess: sess.strip(), sessions)
+            curse = conn.cursor()
+            sessions = map(lambda t: t[0].strip(), curse.execute(f"""
+select group_concat('# @@ Cell ' || line || '\n' || source || '\n', '\n')
+from traces
+where repo = {repo}
+group by session
+order by session, line asc
+limit 10
+            """))
             sessions = filter(lambda sess: len(sess) > 0, sessions)
-            sessions = map(lambda sess: SESSION_START + sess, sessions)
-            sessions = filter(lambda sess: len(sess.split('\n# + Cell')) >= 10, sessions)
+            for sess_filter in session_filters:
+                sessions = filter(sess_filter, sessions)
             sessions = list(sessions)
+            total_unfiltered += len(sessions)
             if len(sessions) == 0:
                 raise ValueError('not enough stuff')
-            nb_sessions = []
-            for sess in sessions:
-                try:
-                    with open('temp.py', 'w') as f:
-                        f.write(sess)
-                    subprocess.check_call(['jupytext', '--to', 'ipynb', 'temp.py', '--output', 'temp.ipynb'])
-                    with open('temp.ipynb') as f:
-                        nb_sessions.append(json.loads(f.read()))
-                except:
-                    continue
-                if len(nb_sessions) >= MAX_SESSIONS:
+            repo_path = NB_TRACE_DIR.joinpath(str(repo_idx))
+            repo_path.mkdir()
+            for sess_idx, session in enumerate(sessions):
+                if args.max_sessions > 0 and sess_idx >= args.max_sessions:
                     break
-            if len(nb_sessions) == 0:
-                raise ValueError('not enough stuff')
-            entry['sessions'] = nb_sessions
-            new_entries.append(entry)
+                session_imports = get_imports(session)
+                all_imports |= session_imports
+                per_repo_imports[repo_idx] |= session_imports
+                with open(repo_path.joinpath(f'{sess_idx}.py'), 'w') as f:
+                    f.write(session)
         except KeyboardInterrupt:
             break
-        except:
+        except Exception as e:
+            logger.info("Exception while grabbing nb history for repo: %s", e)
             continue
+        finally:
+            curse.close()
         successes += 1
-        if MAX_REPOS > 0 and successes >= MAX_REPOS:
+        if args.num_repos > 0 and successes >= args.num_repos:
             break
-    with open('out.json', 'w') as f:
-        f.write(json.dumps(new_entries, indent=2))
-    subprocess.check_call(['rm', 'temp.sqlite'])
-    subprocess.check_call(['rm', 'temp.py'])
-    subprocess.check_call(['rm', 'temp.ipynb'])
+    logger.info(f'total unfiltered sessions: {total_unfiltered}')
+    imports_json = {
+        'all_imports': sorted(all_imports),
+        'per_repo_imports': {k: sorted(v) for k, v in per_repo_imports.items()}
+    }
+    with open('imports.json', 'w') as f:
+        f.write(json.dumps(imports_json, indent=2))
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    parser = argparse.ArgumentParser(description='Grab notebook traces from github')
+    parser.add_argument('--num-repos', type=int, default=DEFAULT_NUM_REPOS)
+    parser.add_argument('--max-sessions', type=int, default=DEFAULT_MAX_SESSIONS)
+    parser.add_argument('--min-cells-per-session', '--min-cells', type=int, default=DEFAULT_MIN_CELLS_PER_SESSION)
+    args = parser.parse_args()
+    conn = sqlite3.connect('./traces.sqlite')
+    try:
+        sys.exit(main(args, conn))
+    finally:
+        conn.close()
+        subprocess.check_call(['rm', '-f'] + glob.glob('temp.*'))
