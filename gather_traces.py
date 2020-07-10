@@ -15,28 +15,31 @@ logger = logging.getLogger(__name__)
 
 
 def main(args, conn):
-    with open('repos.json') as f:
-        repos = json.loads(f.read())
+    with open('traces.json') as f:
+        trace_json = json.loads(f.read())
     successes = 0
     curse = conn.cursor()
-    seen_repos = curse.execute('select repo from traces')
-    seen_repos = set(tup[0] for tup in seen_repos)
+    seen_traces = curse.execute('SELECT trace FROM cell_execs')
+    seen_traces = set(tup[0] for tup in seen_traces)
     curse.close()
-    if os.path.exists('seen-repos.json'):
-        with open('seen-repos.json') as f:
-            seen_repos |= set(map(int, json.loads(f.read())['seen']))
-    for repo_idx, entry in enumerate(repos):
-        repo_id = int(entry['repo']['id'])
-        if repo_id in seen_repos:
-            logger.info('Skipping already download nb trace for repo %d', repo_id)
+    if os.path.exists('seen-traces.json'):
+        with open('seen-traces.json') as f:
+            seen_traces |= set(map(int, json.loads(f.read())['seen']))
+    for entry in trace_json:
+        trace_id = int(entry['id'])
+        if trace_id in seen_traces:
+            logger.info('Skipping already download nb trace %d', trace_id)
             continue
-        seen_repos.add(repo_id)
+        seen_traces.add(trace_id)
         logger.info("Working on entry %s", entry['html_url'])
         try:
             subprocess.check_output(['wget', '-q', '-O', 'temp.sqlite', f'{entry["html_url"]}?raw=true'])
             curse = conn.cursor()
             curse.execute('attach "temp.sqlite" as t')
-            curse.execute(f'insert into traces select {repo_id}, session, line, source from t.history')
+            curse.execute(f"""
+INSERT INTO cell_execs
+SELECT {trace_id}, session, line AS counter, source
+FROM t.history""".strip())
             conn.commit()
         except KeyboardInterrupt:
             break
@@ -54,9 +57,9 @@ def main(args, conn):
         successes += 1
         if 0 < args.num_repos <= successes:
             break
-    seen_repos = {'seen': sorted(seen_repos)}
-    with open('seen-repos.json', 'w') as f:
-        f.write(json.dumps(seen_repos, indent=2))
+    seen_traces = {'seen': sorted(seen_traces)}
+    with open('seen-traces.json', 'w') as f:
+        f.write(json.dumps(seen_traces, indent=2))
 
 
 if __name__ == '__main__':
