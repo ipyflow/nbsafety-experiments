@@ -89,6 +89,11 @@ ORDER BY counter ASC
     """)
     cell_submissions = list(map(lambda t: t[0], cell_submissions))
     curse.close()
+    if args.use_nbsafety:
+        from nbsafety.safety import DependencySafety
+        safety = DependencySafety(cell_magic_name='_NBSAFETY_STATE')
+    else:
+        safety = None
     get_ipython().ast_transformers.append(ExceptionWrapTransformer())
     for cell_source in cell_submissions:
         lines = cell_source.split('\n')
@@ -110,7 +115,11 @@ ORDER BY counter ASC
             pass
         cell_source = re.sub('from sklearn.cross_validation', 'from sklearn.model_selection', cell_source)
         cell_source = re.sub('from sklearn.externals import joblib', 'import joblib', cell_source)
-        get_ipython().run_cell(cell_source, silent=True)
+        if safety is None:
+            get_ipython().run_cell(cell_source, silent=True)
+        else:
+            safety.set_active_cell(cell_id)
+            get_ipython().run_cell_magic(safety.cell_magic_name, None, cell_source)
     return 0
 
 
@@ -118,6 +127,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-t', '--trace', help='Which trace the session to run is in', required=True)
     parser.add_argument('-s', '--session', help='Which session to run', required=True)
+    parser.add_argument('--use-nbsafety', '--nbsafety', action='store_true', help='Whether to use nbsafety')
     args = parser.parse_args()
     conn = sqlite3.connect('./data/traces.sqlite')
     ret = 0
