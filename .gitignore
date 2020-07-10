@@ -1,6 +1,5 @@
 *.csv
 *.json
 *.sqlite
-**/*temp*
-traces*
+data/**
 .ipynb_checkpoints/

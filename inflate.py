@@ -13,7 +13,7 @@ import sys
 DEFAULT_MAX_SESSIONS = -1
 DEFAULT_NUM_REPOS = -1
 DEFAULT_MIN_CELLS_PER_SESSION = 10
-NB_TRACE_DIR = pathlib.Path('./traces')
+NB_TRACE_DIR = pathlib.Path('./data/traces')
 IMPORT_RE = re.compile(r'(^|\n) *(from|import) *(\w+)')
 
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +36,7 @@ def make_session_filters(args, allowed_imports):
 def main(args, conn):
     all_imports = set()
     per_trace_imports = defaultdict(set)
-    with open('allowed-imports.json') as f:
+    with open('./data/allowed-imports.json') as f:
         allowed_imports = set(json.loads(f.read())['allow_imports'])
         session_filters = make_session_filters(args, allowed_imports)
     successes = 0
@@ -88,7 +88,7 @@ ORDER BY session, counter ASC"""))
         'all_imports': sorted(all_imports),
         'per_trace_imports': {k: sorted(v) for k, v in per_trace_imports.items()}
     }
-    with open('imports.json', 'w') as f:
+    with open('./data/imports.json', 'w') as f:
         f.write(json.dumps(imports_json, indent=2))
 
 
@@ -103,4 +103,3 @@ if __name__ == '__main__':
         sys.exit(main(args, conn))
     finally:
         conn.close()
-        subprocess.check_call(['rm', '-f'] + glob.glob('temp.*'))

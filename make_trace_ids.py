@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 import json
-import sys
 
-traces_json_file = sys.argv[1]
+traces_json_file = './data/traces.json'
 with open(traces_json_file) as f:
     trace_json = json.loads(f.read())
 for i, entry in enumerate(trace_json):
