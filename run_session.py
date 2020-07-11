@@ -7,6 +7,7 @@ import logging
 import re
 import sqlite3
 import sys
+import traceback
 
 from IPython import get_ipython
 
@@ -72,12 +73,24 @@ class ExceptionWrapTransformer(ast.NodeTransformer):
         handler = ast.ExceptHandler()
         handler.name = 'e'
         handler.type = ast.Name('Exception', ctx=ast.Load())
-        handler.body = ast.parse("logger.warning('An exception occurred: %s', e)").body
+        handler.body = []
+        handler.body.append(ast.parse("logger.warning('An exception occurred: %s', e)").body[0])
+        handler.body.append(ast.parse("logger.warning(traceback.format_exc())").body[0])
         try_stmt.handlers = [handler]
         try_stmt.orelse = []
         try_stmt.finalbody = []
         node.body = [try_stmt]
         return node
+
+
+shuffle_split_shim = """
+_ShuffleSplit = ShuffleSplit
+def ShuffleSplit(n, **kwargs):
+    if 'n_iter' in kwargs:
+        n_splits = kwargs.pop('n_iter')
+        kwargs['n_splits'] = n_splits
+    return _ShuffleSplit(n, **kwargs)
+""".strip()
 
 
 def main(args, conn):
@@ -91,10 +104,12 @@ ORDER BY counter ASC
     curse.close()
     if args.use_nbsafety:
         from nbsafety.safety import DependencySafety
-        safety = DependencySafety(cell_magic_name='_NBSAFETY_STATE')
+        safety = DependencySafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)
     else:
         safety = None
     get_ipython().ast_transformers.append(ExceptionWrapTransformer())
+    session_had_safety_errors = False
+    exec_count = 0
     for cell_source in cell_submissions:
         lines = cell_source.split('\n')
         new_lines = []
@@ -103,23 +118,33 @@ ORDER BY counter ASC
                 if 'pylab' not in line and 'matplotlib' not in line and 'time' not in line:
                     continue
             new_lines.append(line)
+            if 'import' in line and 'ShuffleSplit' in line:
+                new_lines.append(shuffle_split_shim)
         cell_source = '\n'.join(new_lines).strip()
         if cell_source == '':
             continue
+        exec_count += 1
         cell_id = get_cell_id_for_source(cell_source)
-        logger.info('About to run cell %d', cell_id)
-
+        logger.info('About to run cell %d (cell counter %d)', cell_id, exec_count)
         try:
             cell_source = black.format_file_contents(cell_source, fast=False, mode=black.FileMode())
         except:  # noqa
             pass
+        cell_source = re.sub('from sklearn.decomposition import RandomizedPCA', 'from sklearn.decomposition import PCA as RandomizedPCA', cell_source)
         cell_source = re.sub('from sklearn.cross_validation', 'from sklearn.model_selection', cell_source)
+        cell_source = re.sub('from sklearn.grid_search', 'from sklearn.model_selection', cell_source)
         cell_source = re.sub('from sklearn.externals import joblib', 'import joblib', cell_source)
         if safety is None:
             get_ipython().run_cell(cell_source, silent=True)
         else:
             safety.set_active_cell(cell_id)
             get_ipython().run_cell_magic(safety.cell_magic_name, None, cell_source)
+            session_had_safety_errors = session_had_safety_errors or safety.test_and_clear_detected_flag()
+    if args.use_nbsafety:
+        if session_had_safety_errors:
+            logger.info('Session had safety errors!')
+        else:
+            logger.info('No safety errors detected in session.')
     return 0
 
 

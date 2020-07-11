@@ -12,7 +12,7 @@ import sys
 
 DEFAULT_MAX_SESSIONS = -1
 DEFAULT_NUM_REPOS = -1
-DEFAULT_MIN_CELLS_PER_SESSION = 10
+DEFAULT_MIN_CELLS_PER_SESSION = -1
 NB_TRACE_DIR = pathlib.Path('./data/traces')
 IMPORT_RE = re.compile(r'(^|\n) *(from|import) *(\w+)')
 
@@ -42,7 +42,7 @@ def main(args, conn):
     successes = 0
     NB_TRACE_DIR.mkdir(exist_ok=True)
     curse = conn.cursor()
-    all_traces = curse.execute('SELECT trace FROM cell_execs')
+    all_traces = curse.execute('SELECT DISTINCT trace FROM cell_execs')
     all_traces = set(tup[0] for tup in all_traces)
     curse.close()
     total_unfiltered = 0
@@ -98,7 +98,7 @@ if __name__ == '__main__':
     parser.add_argument('--max-sessions', type=int, default=DEFAULT_MAX_SESSIONS)
     parser.add_argument('--min-cells-per-session', '--min-cells', type=int, default=DEFAULT_MIN_CELLS_PER_SESSION)
     args = parser.parse_args()
-    conn = sqlite3.connect('./traces.sqlite')
+    conn = sqlite3.connect('./data/traces.sqlite')
     try:
         sys.exit(main(args, conn))
     finally:
