@@ -103,8 +103,8 @@ ORDER BY counter ASC
     cell_submissions = list(map(lambda t: t[0], cell_submissions))
     curse.close()
     if args.use_nbsafety:
-        from nbsafety.safety import DependencySafety
-        safety = DependencySafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)
+        from nbsafety.safety import NotebookSafety
+        safety = NotebookSafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)
     else:
         safety = None
     get_ipython().ast_transformers.append(ExceptionWrapTransformer())
