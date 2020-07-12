@@ -16,12 +16,34 @@ try:
 except ImportError:
     from fuzzyset import FuzzySet
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 CELL_ID_BY_SOURCE = {}
 MATCHING_CELL_THRESHOLD = 0.5
 EXECUTED_CELLS = FuzzySet()
+
+
+def setup_logging(log_to_stderr=True):
+    logger.propagate = False
+    logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
+    info_handler = logging.FileHandler('session.info.log', mode='w')
+    info_handler.setLevel(logging.INFO)
+    warning_handler = logging.FileHandler('session.warnings.log', mode='w')
+    warning_handler.setLevel(logging.WARN)
+    error_handler = logging.FileHandler('session.errors.log', mode='w')
+    error_handler.setLevel(logging.ERROR)
+    handlers = [info_handler, warning_handler, error_handler]
+    if log_to_stderr:
+        stderr_handler = logging.StreamHandler()
+        stderr_handler.setLevel(logging.INFO)
+        stderr_handler.setFormatter(formatter)
+        logging.root.addHandler(stderr_handler)
+        logger.addHandler(stderr_handler)
+    for handler in handlers:
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        logging.root.addHandler(handler)
 
 
 def make_cell_counter():
@@ -39,8 +61,8 @@ get_new_cell_id = make_cell_counter()
 
 
 @contextlib.contextmanager
-def redirect_std_streams():
-    with open('/dev/null', 'w') as devnull:
+def redirect_std_streams_to(redirect_fname):
+    with open(redirect_fname, 'w') as devnull:
         old_stdout, old_stderr = sys.stdout, sys.stderr
         old_stdout.flush()
         old_stderr.flush()
@@ -74,7 +96,7 @@ class ExceptionWrapTransformer(ast.NodeTransformer):
         handler.name = 'e'
         handler.type = ast.Name('Exception', ctx=ast.Load())
         handler.body = []
-        handler.body.append(ast.parse("logger.warning('An exception occurred: %s', e)").body[0])
+        handler.body.append(ast.parse("logger.error('An exception occurred: %s', e)").body[0])
         handler.body.append(ast.parse("logger.warning(traceback.format_exc())").body[0])
         try_stmt.handlers = [handler]
         try_stmt.orelse = []
@@ -103,8 +125,8 @@ ORDER BY counter ASC
     cell_submissions = list(map(lambda t: t[0], cell_submissions))
     curse.close()
     if args.use_nbsafety:
-        from nbsafety.safety import NotebookSafety
-        safety = NotebookSafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)
+        import nbsafety.safety
+        safety = nbsafety.safety.NotebookSafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)
     else:
         safety = None
     get_ipython().ast_transformers.append(ExceptionWrapTransformer())
@@ -142,9 +164,9 @@ ORDER BY counter ASC
             session_had_safety_errors = session_had_safety_errors or safety.test_and_clear_detected_flag()
     if args.use_nbsafety:
         if session_had_safety_errors:
-            logger.info('Session had safety errors!')
+            logger.error('Session had safety errors!')
         else:
-            logger.info('No safety errors detected in session.')
+            logger.error('No safety errors detected in session.')
     return 0
 
 
@@ -153,11 +175,13 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--trace', help='Which trace the session to run is in', required=True)
     parser.add_argument('-s', '--session', help='Which session to run', required=True)
     parser.add_argument('--use-nbsafety', '--nbsafety', action='store_true', help='Whether to use nbsafety')
+    parser.add_argument('--log-to-stderr', '--stderr', action='store_true', help='Whether to log to stderr')
     args = parser.parse_args()
+    setup_logging(log_to_stderr=args.log_to_stderr)
     conn = sqlite3.connect('./data/traces.sqlite')
     ret = 0
     try:
-        with redirect_std_streams():
+        with redirect_std_streams_to('/dev/null'):
             ret = main(args, conn)
     except Exception as e:
         logger.error('Exception occurred in outer context: %s', e)
