@@ -1,4 +1,5 @@
 #!/usr/bin/env ipython3
+# -*- coding: utf-8 -*-
 import argparse
 import ast
 import black
@@ -16,13 +17,13 @@ try:
 except ImportError:
     from fuzzyset import FuzzySet
 
+from ast_utils import ExceptionWrapTransformer, FilenameExtractTransformer, GatherImports
+
 logger = logging.getLogger(__name__)
 
 CELL_ID_BY_SOURCE = {}
 MATCHING_CELL_THRESHOLD = 0.5
 EXECUTED_CELLS = FuzzySet()
-LINUX_PATH_RE = re.compile(r'^/?((\w|-|_| |\.)+/)*((\w|-|_| |\.)+(\.\w+)?)$')  # usage: .match(s).group(3)
-WINDOWS_PATH_RE = re.compile(r'^(\w:\\\\)?((\w|-|_| |\.)+\\)*((\w|-|_| |\.)+(\.\w+)?)$')  # usage: .match(s).group(4)
 
 
 def setup_logging(log_to_stderr=True):
@@ -90,23 +91,6 @@ def get_cell_id_for_source(source):
     return cell_id
 
 
-class ExceptionWrapTransformer(ast.NodeTransformer):
-    def visit(self, node):
-        try_stmt = ast.Try()
-        try_stmt.body = node.body
-        handler = ast.ExceptHandler()
-        handler.name = 'e'
-        handler.type = ast.Name('Exception', ctx=ast.Load())
-        handler.body = []
-        handler.body.append(ast.parse("logger.error('An exception occurred: %s', e)").body[0])
-        handler.body.append(ast.parse("logger.warning(traceback.format_exc())").body[0])
-        try_stmt.handlers = [handler]
-        try_stmt.orelse = []
-        try_stmt.finalbody = []
-        node.body = [try_stmt]
-        return node
-
-
 shuffle_split_shim = """
 _ShuffleSplit = ShuffleSplit
 def ShuffleSplit(n, **kwargs):
@@ -126,12 +110,35 @@ ORDER BY counter ASC
     """)
     cell_submissions = list(map(lambda t: t[0], cell_submissions))
     curse.close()
+
+    import_gatherer = GatherImports()
+    for cell_source in cell_submissions:
+        try:
+            import_gatherer.visit(ast.parse(cell_source))
+        except SyntaxError:
+            continue
+    if args.just_log_imports:
+        for pkg in import_gatherer.imported_packages:
+            logger.info(pkg)
+        return 0
+
+    filename_extractor = FilenameExtractTransformer()
+    for cell_source in cell_submissions:
+        try:
+            filename_extractor.visit(ast.parse(cell_source))
+        except SyntaxError:
+            continue
+    if args.just_log_files:
+        for fname in filename_extractor.file_names:
+            logger.info(fname)
+        return 0
+
     if args.use_nbsafety:
         import nbsafety.safety
         safety = nbsafety.safety.NotebookSafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)
     else:
         safety = None
-    get_ipython().ast_transformers.append(ExceptionWrapTransformer())
+    get_ipython().ast_transformers.extend([ExceptionWrapTransformer(), filename_extractor])
     session_had_safety_errors = False
     exec_count = 0
     for cell_source in cell_submissions:
@@ -178,6 +185,8 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--session', help='Which session to run', required=True)
     parser.add_argument('--use-nbsafety', '--nbsafety', action='store_true', help='Whether to use nbsafety')
     parser.add_argument('--log-to-stderr', '--stderr', action='store_true', help='Whether to log to stderr')
+    parser.add_argument('--just-log-files', action='store_true', help='If true, just log paths of files w/out running')
+    parser.add_argument('--just-log-imports', action='store_true', help='If true, just log imports w/out running')
     args = parser.parse_args()
     setup_logging(log_to_stderr=args.log_to_stderr)
     conn = sqlite3.connect('./data/traces.sqlite')
