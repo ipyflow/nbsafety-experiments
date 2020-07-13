@@ -3,9 +3,9 @@
 import argparse
 import ast
 import black
+import collections
 import contextlib
 import logging
-import re
 import sqlite3
 import sys
 import traceback
@@ -18,6 +18,7 @@ except ImportError:
     from fuzzyset import FuzzySet
 
 from ast_utils import ExceptionWrapTransformer, FilenameExtractTransformer, GatherImports
+from resolvers import PipResolver
 
 logger = logging.getLogger(__name__)
 
@@ -91,14 +92,40 @@ def get_cell_id_for_source(source):
     return cell_id
 
 
-shuffle_split_shim = """
-_ShuffleSplit = ShuffleSplit
-def ShuffleSplit(n, **kwargs):
-    if 'n_iter' in kwargs:
-        n_splits = kwargs.pop('n_iter')
-        kwargs['n_splits'] = n_splits
-    return _ShuffleSplit(n, **kwargs)
-""".strip()
+def resolve_packages(cell_submissions):
+    import_gatherer = GatherImports()
+    for cell_source in cell_submissions:
+        try:
+            import_gatherer.visit(ast.parse(cell_source))
+        except SyntaxError:
+            continue
+    success_packages = []
+    failed_packages = []
+    imports_by_pkg = collections.defaultdict(list)
+    for import_stmt, pkg_names in import_gatherer.import_stmts:
+        for pkg in pkg_names:
+            imports_by_pkg[pkg].append(import_stmt)
+    for pkg, import_stmts in imports_by_pkg.items():
+        logger.info('resolving package %s...', pkg)
+        resolver = PipResolver(pkg, import_stmts)
+        if resolver.resolve():
+            success_packages.append(pkg)
+        else:
+            failed_packages.append(pkg)
+    for pkg in success_packages:
+        logger.info('resolving package %s succeeded', pkg)
+    for pkg in failed_packages:
+        logger.info('resolving package %s failed', pkg)
+
+
+def resolve_files(cell_submissions):
+    filename_extractor = FilenameExtractTransformer()
+    for cell_source in cell_submissions:
+        try:
+            filename_extractor.visit(ast.parse(cell_source))
+        except SyntaxError:
+            continue
+    return filename_extractor
 
 
 def main(args, conn):
@@ -111,26 +138,14 @@ ORDER BY counter ASC
     cell_submissions = list(map(lambda t: t[0], cell_submissions))
     curse.close()
 
-    import_gatherer = GatherImports()
-    for cell_source in cell_submissions:
-        try:
-            import_gatherer.visit(ast.parse(cell_source))
-        except SyntaxError:
-            continue
-    if args.just_log_imports:
-        for pkg in import_gatherer.imported_packages:
-            logger.info(pkg)
-        return 0
-
-    filename_extractor = FilenameExtractTransformer()
-    for cell_source in cell_submissions:
-        try:
-            filename_extractor.visit(ast.parse(cell_source))
-        except SyntaxError:
-            continue
+    filename_extractor = resolve_files(cell_submissions)
     if args.just_log_files:
         for fname in filename_extractor.file_names:
             logger.info(fname)
+        return 0
+
+    resolve_packages(cell_submissions)
+    if args.just_log_imports:
         return 0
 
     if args.use_nbsafety:
@@ -149,8 +164,6 @@ ORDER BY counter ASC
                 if 'pylab' not in line and 'matplotlib' not in line and 'time' not in line:
                     continue
             new_lines.append(line)
-            if 'import' in line and 'ShuffleSplit' in line:
-                new_lines.append(shuffle_split_shim)
         cell_source = '\n'.join(new_lines).strip()
         if cell_source == '':
             continue
@@ -161,10 +174,6 @@ ORDER BY counter ASC
             cell_source = black.format_file_contents(cell_source, fast=False, mode=black.FileMode())
         except:  # noqa
             pass
-        cell_source = re.sub('from sklearn.decomposition import RandomizedPCA', 'from sklearn.decomposition import PCA as RandomizedPCA', cell_source)
-        cell_source = re.sub('from sklearn.cross_validation', 'from sklearn.model_selection', cell_source)
-        cell_source = re.sub('from sklearn.grid_search', 'from sklearn.model_selection', cell_source)
-        cell_source = re.sub('from sklearn.externals import joblib', 'import joblib', cell_source)
         if safety is None:
             get_ipython().run_cell(cell_source, silent=True)
         else:

@@ -13,13 +13,16 @@ class GatherImports(ast.NodeVisitor):
         self.import_stmts = []
 
     def visit_Import(self, node):
-        self.import_stmts.append(node)
+        imported_package_names = set()
         for name in node.names:
-            self.imported_packages.add(name.name.split('.')[0])
+            imported_package_names.add(name.name.split('.')[0])
+        self.imported_packages |= imported_package_names
+        self.import_stmts.append((node, tuple(imported_package_names)))
 
     def visit_ImportFrom(self, node):
-        self.import_stmts.append(node)
-        self.imported_packages.add(node.module.split('.')[0])
+        import_name = node.module.split('.')[0]
+        self.import_stmts.append((node, (import_name,)))
+        self.imported_packages.add(import_name)
 
 
 class FilenameExtractTransformer(ast.NodeTransformer):
