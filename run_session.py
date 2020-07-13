@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 CELL_ID_BY_SOURCE = {}
 MATCHING_CELL_THRESHOLD = 0.5
 EXECUTED_CELLS = FuzzySet()
+LINUX_PATH_RE = re.compile(r'^/?((\w|-|_| |\.)+/)*((\w|-|_| |\.)+(\.\w+)?)$')  # usage: .match(s).group(3)
+WINDOWS_PATH_RE = re.compile(r'^(\w:\\\\)?((\w|-|_| |\.)+\\)*((\w|-|_| |\.)+(\.\w+)?)$')  # usage: .match(s).group(4)
 
 
 def setup_logging(log_to_stderr=True):
