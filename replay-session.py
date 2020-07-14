@@ -147,6 +147,7 @@ ORDER BY counter ASC
     if args.just_log_imports:
         return 0
 
+    get_ipython().run_line_magic('matplotlib', 'inline')
     if args.use_nbsafety:
         import nbsafety.safety
         safety = nbsafety.safety.NotebookSafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)

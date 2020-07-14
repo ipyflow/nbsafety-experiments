@@ -47,7 +47,10 @@ class PipResolver(ImportResolver):
     def resolve(self):
         if self._try_imports() == 0:
             return True
-        best = (float('inf'), None)
+
+        def _version_tuple(v):
+            return tuple(map(int, v.split('.')))
+        best = (-float('inf'), None, None)
         package = PACKAGES_BY_IMPORT.get(self.libname, {'package': self.libname})
         pypi_package = package['package']
         with open('/dev/null', 'w') as devnull:
@@ -60,17 +63,17 @@ class PipResolver(ImportResolver):
                         )
                     except:
                         continue
-                    best = min(best, (self._try_imports(), v))
+                    best = max(best, (-self._try_imports(), _version_tuple(v), v))
                     if best[0] == 0:  # short-circuit if we find one that fixes all imports
                         return True
-                if best[1] is None:
+                if best[2] is None:
                     logger.error('error: unable to find working package for %s', package)
                     return False
                 subprocess.check_call(
-                    f'pip install {pypi_package}=={best[1]}',
+                    f'pip install {pypi_package}=={best[2]}',
                     shell=True, stdout=devnull, stderr=subprocess.STDOUT
                 )
-                logger.warning('warning: %d import(s) still failing', best[0])
+                logger.warning('warning: %d import(s) still failing', -best[0])
             else:
                 subprocess.check_call(
                     f'pip install --upgrade {pypi_package}',
