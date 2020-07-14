@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import ast
 import logging
+import pickle
 import subprocess
 
 logger = logging.getLogger(__name__)
@@ -23,33 +24,33 @@ class Resolver(object):
 
 
 class ImportResolver(Resolver):
-    def __init__(self, libname, failing_imports):
+    def __init__(self, libname, imports_involving_lib):
         self.libname = libname
-        self.failing_imports = failing_imports
+        self.imports_involving_lib = imports_involving_lib
 
 
 class PipResolver(ImportResolver):
 
+    # huge hack using pickle to get around not having the actual text source code
     def _try_imports(self):
         total_failing = 0
-        for import_stmt in self.failing_imports:
-            mod = ast.Module()
-            mod.body = [import_stmt]
-            try:
-                eval(compile(mod, filename='', mode='exec'))
-            except (ImportError, ModuleNotFoundError):
-                total_failing += 1
-            except Exception as e:
-                logger.error('Unexpected exception: %s', e)
-                total_failing += 1
+        with open('/dev/null', 'w') as devnull:
+            for import_stmt in self.imports_involving_lib:
+                mod = ast.Module()
+                mod.body = [import_stmt]
+                if subprocess.call(f"""
+    python -c "import pickle; eval(compile(pickle.loads({pickle.dumps(mod)}), filename='', mode='exec'))"
+    """.strip(), shell=True, stdout=devnull, stderr=subprocess.STDOUT) != 0:
+                    total_failing += 1
         return total_failing
 
     def resolve(self):
         if self._try_imports() == 0:
             return True
 
-        def _version_tuple(v):
-            return tuple(map(int, v.split('.')))
+        def _version_tuple(vstr):
+            return tuple(map(int, vstr.split('.')))
+
         best = (-float('inf'), None, None)
         package = PACKAGES_BY_IMPORT.get(self.libname, {'package': self.libname})
         pypi_package = package['package']

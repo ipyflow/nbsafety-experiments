@@ -4,8 +4,26 @@ import re
 import traceback
 
 
-LINUX_PATH_RE = re.compile(r'^/?((\w|-|_| |\.)+/)*((\w|-|_| |\.)+(\.\w\w\w))$')  # usage: .match(s).group(3)
-WINDOWS_PATH_RE = re.compile(r'^(\w:\\\\)?((\w|-|_| |\.)+\\)*((\w|-|_| |\.)+(\.\w\w\w))$')  # usage: .match(s).group(4)
+PATH_SEP = r'[/\\]'
+
+# usage: .match(s).group(3)
+LINUX_PATH_RE = re.compile(r'^{s}?((\w|-|_| |\.)+{s})*((\w|-|_| |\.)+(\.\w\w\w))$'.format(s=PATH_SEP))
+# usage: .match(s).group(4)
+WINDOWS_PATH_RE = re.compile(r'^(\w:{s}{s}?)?((\w|-|_| |\.)+{s})*((\w|-|_| |\.)+(\.\w\w\w))$'.format(s=PATH_SEP))
+
+
+def make_matcher(regex, group):
+    def _matcher(s):
+        match = regex.match(s)
+        if match is None:
+            return None
+        else:
+            return match.group(group)
+    return _matcher
+
+
+WINDOWS_MATCHER = make_matcher(WINDOWS_PATH_RE, 4)
+LINUX_MATCHER = make_matcher(LINUX_PATH_RE, 3)
 
 
 class GatherImports(ast.NodeVisitor):
@@ -31,29 +49,51 @@ class FilenameExtractTransformer(ast.NodeTransformer):
         self.file_names = set()
 
     def visit_Str(self, node):
-        match = LINUX_PATH_RE.match(node.s)
+        match = LINUX_MATCHER(node.s)
         if match is not None:
-            node.s = match.group(3)
+            node.s = match
             self.file_names.add(node.s)
         else:
-            match = WINDOWS_PATH_RE.match(node.s)
+            match = WINDOWS_MATCHER(node.s)
             if match is not None:
-                node.s = match.group(4)
+                node.s = match
                 self.file_names.add(node.s)
         return node
 
 
+class ExceptionHandler(object):
+    def __init__(self, exc, alias, body):
+        if isinstance(exc, str):
+            self.exc_name = exc
+        elif issubclass(exc, BaseException):
+            self.exc_name = exc.__name__
+        else:
+            raise TypeError('got value %s with invalid type for exc' % exc)
+        self.alias = alias
+        self.body = body
+
+    def build_ast(self):
+        handler = ast.ExceptHandler()
+        handler.type = ast.Name(self.exc_name, ctx=ast.Load())
+        handler.name = self.alias
+        handler.body = ast.parse(self.body).body
+        return handler
+
+
 class ExceptionWrapTransformer(ast.NodeTransformer):
+    def __init__(self, handlers=None):
+        if handlers is None:
+            handlers = []
+        self.handlers = handlers
+
     def visit(self, node):
         try_stmt = ast.Try()
         try_stmt.body = node.body
-        handler = ast.ExceptHandler()
-        handler.name = 'e'
-        handler.type = ast.Name('Exception', ctx=ast.Load())
-        handler.body = []
-        handler.body.append(ast.parse("logger.error('An exception occurred: %s', e)").body[0])
-        handler.body.append(ast.parse("logger.warning(traceback.format_exc())").body[0])
-        try_stmt.handlers = [handler]
+        default_handler = ExceptionHandler(Exception, 'e', """
+logger.error('An exception occurred: %s', e)
+logger.warning(traceback.format_exc())
+""".strip()).build_ast()
+        try_stmt.handlers = self.handlers + [default_handler]
         try_stmt.orelse = []
         try_stmt.finalbody = []
         node.body = [try_stmt]
