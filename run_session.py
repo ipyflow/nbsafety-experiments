@@ -8,7 +8,6 @@ import contextlib
 import logging
 import sqlite3
 import sys
-import traceback
 
 from IPython import get_ipython
 
