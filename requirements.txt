@@ -1,3 +1,5 @@
 black
-nbsafety
 fuzzyset
+jupytext
+kaggle
+nbsafety

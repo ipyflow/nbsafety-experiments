@@ -84,7 +84,7 @@ class ExceptionWrapTransformer(ast.NodeTransformer):
     def __init__(self, handlers=None):
         if handlers is None:
             handlers = []
-        self.handlers = handlers
+        self.handlers = list(handlers)
 
     def visit(self, node):
         try_stmt = ast.Try()
@@ -92,8 +92,13 @@ class ExceptionWrapTransformer(ast.NodeTransformer):
         default_handler = ExceptionHandler(Exception, 'e', """
 logger.error('An exception occurred: %s', e)
 logger.warning(traceback.format_exc())
-""".strip()).build_ast()
-        try_stmt.handlers = self.handlers + [default_handler]
+""".strip())
+        try_stmt.handlers = []
+        for handler in self.handlers + [default_handler]:
+            if isinstance(handler, ExceptionHandler):
+                try_stmt.handlers.append(handler.build_ast())
+            else:
+                try_stmt.handlers.append(handler)
         try_stmt.orelse = []
         try_stmt.finalbody = []
         node.body = [try_stmt]

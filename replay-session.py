@@ -63,6 +63,14 @@ def make_cell_counter():
 get_new_cell_id = make_cell_counter()
 
 
+def my_path_joiner(a, *p):
+    p = tuple(p)
+    if len(p) > 0:
+        return p[-1].split('/')[-1]
+    else:
+        return a.split('/')[-1]
+
+
 @contextlib.contextmanager
 def redirect_std_streams_to(redirect_fname):
     with open(redirect_fname, 'w') as devnull:
@@ -137,6 +145,13 @@ ORDER BY counter ASC
     cell_submissions = list(map(lambda t: t[0], cell_submissions))
     curse.close()
 
+    if args.write_session_file:
+        with open('session.py', 'w') as f:
+            for idx, cell in enumerate(cell_submissions):
+                f.write(f'# + Cell {idx + 1}\n')
+                f.write(cell)
+                f.write('\n\n')
+
     filename_extractor = resolve_files(cell_submissions)
     if args.just_log_files:
         for fname in filename_extractor.file_names:
@@ -159,15 +174,15 @@ ORDER BY counter ASC
     for cell_source in cell_submissions:
         lines = cell_source.split('\n')
         new_lines = []
+        exec_count += 1
         for line in lines:
             if line.startswith('get_ipython()'):
-                if 'pylab' not in line and 'matplotlib' not in line and 'time' not in line:
+                if 'pylab' not in line and 'matplotlib' not in line and ('time' not in line or 'timedelta' in line):
                     continue
             new_lines.append(line)
         cell_source = '\n'.join(new_lines).strip()
         if cell_source == '':
             continue
-        exec_count += 1
         cell_id = get_cell_id_for_source(cell_source)
         logger.info('About to run cell %d (cell counter %d)', cell_id, exec_count)
         try:
@@ -196,6 +211,7 @@ if __name__ == '__main__':
     parser.add_argument('--log-to-stderr', '--stderr', action='store_true', help='Whether to log to stderr')
     parser.add_argument('--just-log-files', action='store_true', help='If true, just log paths of files w/out running')
     parser.add_argument('--just-log-imports', action='store_true', help='If true, just log imports w/out running')
+    parser.add_argument('--write-session-file', action='store_true', help='If write session to session.py')
     args = parser.parse_args()
     setup_logging(log_to_stderr=args.log_to_stderr)
     conn = sqlite3.connect('./data/traces.sqlite')

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import ast
 import logging
+import kaggle
 import pickle
 import subprocess
 
@@ -10,6 +11,9 @@ PACKAGES_BY_IMPORT = {
     'sklearn': {
         'package': 'scikit-learn',
         'versions': ['0.21.3', '0.20.4', '0.19.2']
+    },
+    'skimage': {
+        'package': 'scikit-image',
     }
 }
 
@@ -38,10 +42,9 @@ class PipResolver(ImportResolver):
             for import_stmt in self.imports_involving_lib:
                 mod = ast.Module()
                 mod.body = [import_stmt]
-                if subprocess.call(f"""
-    python -c "import pickle; eval(compile(pickle.loads({pickle.dumps(mod)}), filename='', mode='exec'))"
-    """.strip(), shell=True, stdout=devnull, stderr=subprocess.STDOUT) != 0:
-                    total_failing += 1
+                total_failing += (subprocess.call(f"""
+python -c "import pickle; eval(compile(pickle.loads({pickle.dumps(mod)}), filename='', mode='exec'))"
+""".strip(), shell=True, stdout=devnull, stderr=subprocess.STDOUT) != 0)
         return total_failing
 
     def resolve(self):
@@ -91,4 +94,6 @@ class FileResolver(Resolver):
 
 
 class KaggleResolver(FileResolver):
+    # kaggle.api.dataset_list(search='titanic')
+    # kaggle.api.dataset_download_files('ibooth1/titanic3')
     pass
