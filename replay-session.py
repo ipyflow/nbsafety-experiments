@@ -6,6 +6,7 @@ import black
 import collections
 import contextlib
 import logging
+import os
 import sqlite3
 import sys
 
@@ -16,7 +17,7 @@ try:
 except ImportError:
     from fuzzyset import FuzzySet
 
-from ast_utils import ExceptionWrapTransformer, FilenameExtractTransformer, GatherImports
+from ast_utils import FilenameExtractTransformer, GatherImports
 from resolvers import PipResolver
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ def setup_logging(log_to_stderr=True):
     info_handler = logging.FileHandler('session.info.log', mode='w')
     info_handler.setLevel(logging.INFO)
     warning_handler = logging.FileHandler('session.warnings.log', mode='w')
-    warning_handler.setLevel(logging.WARN)
+    warning_handler.setLevel(logging.WARNING)
     error_handler = logging.FileHandler('session.errors.log', mode='w')
     error_handler.setLevel(logging.ERROR)
     handlers = [info_handler, warning_handler, error_handler]
@@ -166,9 +167,11 @@ ORDER BY counter ASC
     if args.use_nbsafety:
         import nbsafety.safety
         safety = nbsafety.safety.NotebookSafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)
+        # get_ipython().run_line_magic('safety', 'trace_messages enable')
     else:
         safety = None
-    get_ipython().ast_transformers.extend([ExceptionWrapTransformer(), filename_extractor])
+    # get_ipython().ast_transformers.extend([ExceptionWrapTransformer(), filename_extractor])
+    get_ipython().ast_transformers.extend([filename_extractor])
     session_had_safety_errors = False
     exec_count = 0
     for cell_source in cell_submissions:
@@ -177,24 +180,38 @@ ORDER BY counter ASC
         exec_count += 1
         for line in lines:
             if line.startswith('get_ipython()'):
-                if 'pylab' not in line and 'matplotlib' not in line and ('time' not in line or 'timedelta' in line):
+                if 'pylab' not in line and ('time' not in line or 'timedelta' in line):
                     continue
-            new_lines.append(line)
-        cell_source = '\n'.join(new_lines).strip()
-        if cell_source == '':
+            new_lines.append('    ' + line)
+        cell_source = '\n'.join(new_lines)
+        if cell_source.strip() == '':
             continue
         cell_id = get_cell_id_for_source(cell_source)
+        cell_source = f"""
+try:
+{cell_source}
+except Exception as e:
+    import traceback
+    logger.error('An exception occurred: %s', e)
+    logger.warning(traceback.format_exc())""".strip()
         logger.info('About to run cell %d (cell counter %d)', cell_id, exec_count)
         try:
             cell_source = black.format_file_contents(cell_source, fast=False, mode=black.FileMode())
         except:  # noqa
             pass
-        if safety is None:
-            get_ipython().run_cell(cell_source, silent=True)
-        else:
-            safety.set_active_cell(cell_id)
-            get_ipython().run_cell_magic(safety.cell_magic_name, None, cell_source)
-            session_had_safety_errors = session_had_safety_errors or safety.test_and_clear_detected_flag()
+
+        old_path_joiner = os.path.join
+        if 'os.path.join' in cell_source and 'IMDb' not in cell_source:
+            os.path.join = my_path_joiner
+        try:
+            if safety is None:
+                get_ipython().run_cell(cell_source, silent=True)
+            else:
+                safety.set_active_cell(cell_id)
+                get_ipython().run_cell_magic(safety.cell_magic_name, None, cell_source)
+                session_had_safety_errors = session_had_safety_errors or safety.test_and_clear_detected_flag()
+        finally:
+            os.path.join = old_path_joiner
     if args.use_nbsafety:
         if session_had_safety_errors:
             logger.error('Session had safety errors!')

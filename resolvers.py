@@ -2,7 +2,9 @@
 import ast
 import logging
 import kaggle
+import pathlib
 import pickle
+import shutil
 import subprocess
 
 logger = logging.getLogger(__name__)
@@ -37,17 +39,35 @@ class PipResolver(ImportResolver):
 
     # huge hack using pickle to get around not having the actual text source code
     def _try_imports(self):
-        total_failing = 0
-        with open('/dev/null', 'w') as devnull:
-            for import_stmt in self.imports_involving_lib:
-                mod = ast.Module()
-                mod.body = [import_stmt]
-                total_failing += (subprocess.call(f"""
-python -c "import pickle; eval(compile(pickle.loads({pickle.dumps(mod)}), filename='', mode='exec'))"
-""".strip(), shell=True, stdout=devnull, stderr=subprocess.STDOUT) != 0)
+        unique_imports = set()
+        for import_stmt in self.imports_involving_lib:
+            mod = ast.Module()
+            mod.body = [import_stmt]
+            unique_imports.add(pickle.dumps(mod))
+        logger.info('total unique imports: %d vs %d non-dedupped', len(unique_imports), len(self.imports_involving_lib))
+        pickled_import_dir = pathlib.Path('pickled_imports')
+        try:
+            shutil.rmtree(pickled_import_dir)
+        except:
+            pass
+        pickled_import_dir.mkdir(exist_ok=True)
+        for idx, import_dump in enumerate(unique_imports):
+            with open(pickled_import_dir.joinpath(f'pickled.{idx}.dump'), 'wb') as f:
+                f.write(import_dump)
+        try:
+            with open('/dev/null', 'w') as devnull:
+                total_failing = subprocess.call(
+                    'python try-imports.py', shell=True, stdout=devnull, stderr=subprocess.STDOUT
+                )
+                logger.info('total failing: %d', total_failing)
+        finally:
+            shutil.rmtree(pickled_import_dir)
         return total_failing
 
     def resolve(self):
+        if self.libname == 'itertools':
+            return True
+
         if self._try_imports() == 0:
             return True
 

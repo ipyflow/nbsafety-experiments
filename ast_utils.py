@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import ast
 import re
-import traceback
 
 
 PATH_SEP = r'[/\\]'
@@ -58,48 +57,4 @@ class FilenameExtractTransformer(ast.NodeTransformer):
             if match is not None:
                 node.s = match
                 self.file_names.add(node.s)
-        return node
-
-
-class ExceptionHandler(object):
-    def __init__(self, exc, alias, body):
-        if isinstance(exc, str):
-            self.exc_name = exc
-        elif issubclass(exc, BaseException):
-            self.exc_name = exc.__name__
-        else:
-            raise TypeError('got value %s with invalid type for exc' % exc)
-        self.alias = alias
-        self.body = body
-
-    def build_ast(self):
-        handler = ast.ExceptHandler()
-        handler.type = ast.Name(self.exc_name, ctx=ast.Load())
-        handler.name = self.alias
-        handler.body = ast.parse(self.body).body
-        return handler
-
-
-class ExceptionWrapTransformer(ast.NodeTransformer):
-    def __init__(self, handlers=None):
-        if handlers is None:
-            handlers = []
-        self.handlers = list(handlers)
-
-    def visit(self, node):
-        try_stmt = ast.Try()
-        try_stmt.body = node.body
-        default_handler = ExceptionHandler(Exception, 'e', """
-logger.error('An exception occurred: %s', e)
-logger.warning(traceback.format_exc())
-""".strip())
-        try_stmt.handlers = []
-        for handler in self.handlers + [default_handler]:
-            if isinstance(handler, ExceptionHandler):
-                try_stmt.handlers.append(handler.build_ast())
-            else:
-                try_stmt.handlers.append(handler)
-        try_stmt.orelse = []
-        try_stmt.finalbody = []
-        node.body = [try_stmt]
         return node
