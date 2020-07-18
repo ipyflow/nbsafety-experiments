@@ -1,4 +1,5 @@
 *.csv
+!sessions-with-safety-errors.csv
 *.json
 *.sqlite
 data/**

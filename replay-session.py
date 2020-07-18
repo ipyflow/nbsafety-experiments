@@ -7,6 +7,8 @@ import collections
 import contextlib
 import logging
 import os
+import shutil
+import subprocess
 import sqlite3
 import sys
 
@@ -19,12 +21,24 @@ except ImportError:
 
 from ast_utils import FilenameExtractTransformer, GatherImports
 from resolvers import PipResolver
+from timeout import timeout
 
 logger = logging.getLogger(__name__)
 
 CELL_ID_BY_SOURCE = {}
-MATCHING_CELL_THRESHOLD = 0.5
+MATCHING_CELL_THRESHOLD = 0.8
 EXECUTED_CELLS = FuzzySet()
+
+
+@timeout(15)
+def timeout_run_cell(cell_id, cell_source, safety=None):
+    if safety is None:
+        get_ipython().run_cell(cell_source, silent=True)
+        return False
+    else:
+        safety.set_active_cell(cell_id)
+        get_ipython().run_cell_magic(safety.cell_magic_name, None, cell_source)
+        return safety.test_and_clear_detected_flag()
 
 
 def setup_logging(log_to_stderr=True):
@@ -70,6 +84,14 @@ def my_path_joiner(a, *p):
         return p[-1].split('/')[-1]
     else:
         return a.split('/')[-1]
+
+
+def input(*args, **kwargs):
+    pass
+
+
+def raw_input(*args, **kwargs):
+    pass
 
 
 @contextlib.contextmanager
@@ -146,12 +168,24 @@ ORDER BY counter ASC
     cell_submissions = list(map(lambda t: t[0], cell_submissions))
     curse.close()
 
+    with open('session.py', 'w') as f:
+        for idx, cell in enumerate(cell_submissions):
+            f.write(f'# + Cell {idx + 1}\n')
+            f.write(cell)
+            f.write('\n\n')
+
+    with open('/dev/null', 'w') as devnull:
+        subprocess.call('2to3 session.py -w', shell=True, stdout=devnull, stderr=subprocess.STDOUT)
+
     if args.write_session_file:
-        with open('session.py', 'w') as f:
-            for idx, cell in enumerate(cell_submissions):
-                f.write(f'# + Cell {idx + 1}\n')
-                f.write(cell)
-                f.write('\n\n')
+        shutil.copy('session.py', f'session.{args.trace}.{args.session}.py')
+
+    with open('session.py') as f:
+        cell_submissions = f.read().split('# + Cell ')
+        cell_submissions = map(lambda cell: cell.strip(), cell_submissions)
+        cell_submissions = filter(lambda cell: len(cell) > 0, cell_submissions)
+        cell_submissions = map(lambda cell: '# + Cell ' + cell, cell_submissions)
+        cell_submissions = list(cell_submissions)
 
     filename_extractor = resolve_files(cell_submissions)
     if args.just_log_files:
@@ -163,7 +197,21 @@ ORDER BY counter ASC
     if args.just_log_imports:
         return 0
 
+    correct_predictions = 0
+    new_only_correct_predictions = 0
+    attempted_predictions = 0
+    specificity_num = 0
+    specificity_den = 0
+    new_only_specificity_num = 0
+    new_only_specificity_den = 0
+    prev_cell_id = None
+    predicted_cells = set()
+    prev_predicted_cells = set()
+    refresher_cells = set()
+
     get_ipython().run_line_magic('matplotlib', 'inline')
+    get_ipython().run_cell('import numpy as np', silent=True)
+    get_ipython().run_cell('import pandas as pd', silent=True)
     if args.use_nbsafety:
         import nbsafety.safety
         safety = nbsafety.safety.NotebookSafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)
@@ -174,6 +222,7 @@ ORDER BY counter ASC
     get_ipython().ast_transformers.extend([filename_extractor])
     session_had_safety_errors = False
     exec_count = 0
+    notebook_state = {}
     for cell_source in cell_submissions:
         lines = cell_source.split('\n')
         new_lines = []
@@ -191,6 +240,7 @@ ORDER BY counter ASC
 try:
 {cell_source}
 except Exception as e:
+    should_test_prediction = False
     import traceback
     logger.error('An exception occurred: %s', e)
     logger.warning(traceback.format_exc())""".strip()
@@ -200,23 +250,50 @@ except Exception as e:
         except:  # noqa
             pass
 
-        old_path_joiner = os.path.join
+        os_path_join = os.path.join
         if 'os.path.join' in cell_source and 'IMDb' not in cell_source:
             os.path.join = my_path_joiner
+        this_cell_had_safety_errors = False
+        should_test_prediction = True
         try:
-            if safety is None:
-                get_ipython().run_cell(cell_source, silent=True)
-            else:
-                safety.set_active_cell(cell_id)
-                get_ipython().run_cell_magic(safety.cell_magic_name, None, cell_source)
-                session_had_safety_errors = session_had_safety_errors or safety.test_and_clear_detected_flag()
+            this_cell_had_safety_errors = timeout_run_cell(cell_id, cell_source, safety=safety)
+            session_had_safety_errors = session_had_safety_errors or this_cell_had_safety_errors
+        except:
+            should_test_prediction = False
         finally:
-            os.path.join = old_path_joiner
-    if args.use_nbsafety:
-        if session_had_safety_errors:
-            logger.error('Session had safety errors!')
-        else:
-            logger.error('No safety errors detected in session.')
+            os.path.join = os_path_join
+
+        if predicted_cells is not None and len(predicted_cells) > 0 and safety is not None and cell_id != prev_cell_id and cell_id in notebook_state:
+            if should_test_prediction and not this_cell_had_safety_errors:
+                attempted_predictions += 1
+                correct_predictions += cell_id in predicted_cells
+                if cell_id in predicted_cells:
+                    specificity_num += len(predicted_cells)
+                    specificity_den += len(notebook_state)
+                new_predicted_cells = predicted_cells - prev_predicted_cells
+                new_only_correct_predictions += cell_id in new_predicted_cells
+                if cell_id in new_predicted_cells | refresher_cells:
+                    new_only_specificity_num += len(new_predicted_cells)
+                    new_only_specificity_den += len(notebook_state)
+                # predicted_cells.discard(cell_id)
+
+        prev_predicted_cells = predicted_cells
+        notebook_state[cell_id] = cell_source
+        if safety is not None:
+            precheck = safety.multicell_precheck(notebook_state)
+            refresher_cells = set(precheck['refresher_links'].keys())
+            predicted_cells = set(precheck['stale_output_cells']) | refresher_cells
+        prev_cell_id = cell_id
+
+
+    if session_had_safety_errors:
+        logger.error('Session had safety errors!')
+    else:
+        logger.error('No safety errors detected in session.')
+    logger.error('Correct predictions: %d of %d attempted', correct_predictions, attempted_predictions)
+    logger.error('Narrowed down choices to %d of %d possible', specificity_num, specificity_den)
+    logger.error('New only correct predictions: %d of %d attempted', new_only_correct_predictions, attempted_predictions)
+    logger.error('Narrowed down new only choices to %d of %d possible', new_only_specificity_num, new_only_specificity_den)
     return 0
 
 

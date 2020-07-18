@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 import ast
+import logging
 import re
 
+logger = logging.getLogger(__name__)
 
 PATH_SEP = r'[/\\]'
 
@@ -48,13 +50,18 @@ class FilenameExtractTransformer(ast.NodeTransformer):
         self.file_names = set()
 
     def visit_Str(self, node):
+        if 'train' in node.s or 'test' in node.s:
+            logger.warning('file:::%s', node.s)
+            return node
         match = LINUX_MATCHER(node.s)
         if match is not None:
+            logger.warning('file:::%s', match)
             node.s = match
             self.file_names.add(node.s)
         else:
             match = WINDOWS_MATCHER(node.s)
             if match is not None:
+                logger.warning('file:::%s', match)
                 node.s = match
                 self.file_names.add(node.s)
         return node
