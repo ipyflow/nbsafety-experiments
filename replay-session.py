@@ -79,12 +79,16 @@ def make_cell_counter():
 get_new_cell_id = make_cell_counter()
 
 
+os_path_join = os.path.join
+
+
 def my_path_joiner(a, *p):
     p = tuple(p)
     if len(p) > 0:
-        return p[-1].split('/')[-1]
+        fname = p[-1].split('/')[-1]
     else:
-        return a.split('/')[-1]
+        fname = a.split('/')[-1]
+    return os_path_join('data', 'transient', fname)
 
 
 def input(*args, **kwargs):
@@ -159,7 +163,15 @@ def resolve_files(cell_submissions):
     return filename_extractor
 
 
+# these are accessed in ipython context and so need to be defined here
+num_exceptions = 0
+exception_counts = collections.Counter()
+should_test_prediction = True
+
+
 def main(args, conn):
+    global num_exceptions
+    global should_test_prediction
     curse = conn.cursor()
     cell_submissions = curse.execute(f"""
 SELECT source FROM cell_execs
@@ -221,7 +233,7 @@ ORDER BY counter ASC
         safety = None
     # get_ipython().ast_transformers.extend([ExceptionWrapTransformer(), filename_extractor])
     get_ipython().ast_transformers.extend([filename_extractor])
-    session_had_safety_errors = False
+    num_safety_errors = 0
     exec_count_orig = 0
     exec_count_replay = 0
     exec_count_replay_successes = 0
@@ -243,10 +255,12 @@ ORDER BY counter ASC
 try:
 {cell_source}
 except Exception as e:
-    exec_count_replay_successes -= 1
+    exception_counts[e.__class__.__name__] += 1
+    num_exceptions += 1
     should_test_prediction = False
     import traceback
     logger.error('An exception occurred: %s', e)
+    logger.error('%s', e.__class__.__name__)
     logger.warning(traceback.format_exc())""".strip()
         logger.info('About to run cell %d (cell counter %d)', cell_id, exec_count_orig)
         try:
@@ -254,7 +268,6 @@ except Exception as e:
         except:  # noqa
             pass
 
-        os_path_join = os.path.join
         if 'os.path.join' in cell_source and 'IMDb' not in cell_source:
             os.path.join = my_path_joiner
         this_cell_had_safety_errors = False
@@ -262,8 +275,10 @@ except Exception as e:
         try:
             exec_count_replay += 1
             this_cell_had_safety_errors = timeout_run_cell(cell_id, cell_source, safety=safety)
-            session_had_safety_errors = session_had_safety_errors or this_cell_had_safety_errors
-        except:
+            num_safety_errors += this_cell_had_safety_errors
+        except Exception as outer_e:
+            exception_counts[outer_e.__class__.__name__] += 1
+            num_exceptions += 1
             should_test_prediction = False
         finally:
             exec_count_replay_successes += should_test_prediction
@@ -292,8 +307,8 @@ except Exception as e:
         prev_cell_id = cell_id
 
 
-    if session_had_safety_errors:
-        logger.error('Session had safety errors!')
+    if num_safety_errors > 0:
+        logger.error('Session had %d safety errors!', num_safety_errors)
     else:
         logger.error('No safety errors detected in session.')
     logger.error('Correct predictions: %d of %d attempted', correct_predictions, attempted_predictions)
@@ -312,23 +327,44 @@ except Exception as e:
         total_cells_available_new_or_refresher=new_only_specificity_den,
         num_cell_execs=exec_count_replay,
         num_successful_cell_execs=exec_count_replay_successes,
-        num_cells_created=get_new_cell_id(increment=False)
+        num_cells_created=get_new_cell_id(increment=False),
+        num_exceptions=num_exceptions,
+        num_safety_errors=num_safety_errors
     )
+    curse = conn.cursor()
     try:
-        curse = conn.cursor()
-        curse.execute(f"""
+        sql = f"""
         INSERT OR REPLACE INTO replay_stats({','.join(upsert_row.keys())})
-        VALUES ({','.join(str(v) for v in upsert_row.values())})
-        """)
+        VALUES ({','.join(repr(v) for v in upsert_row.values())})
+        """
+        logger.warning(sql)
+        curse.execute(sql)
+        sql = f'DELETE FROM replay_exception_stats WHERE trace={args.trace} AND session={args.session}'
+        logger.warning(sql)
+        curse.execute(sql)
+        for exc_name, exc_count in exception_counts.items():
+            upsert_row = dict(
+                trace=args.trace,
+                session=args.session,
+                exception=exc_name,
+                count=exc_count
+            )
+            sql = f"""
+            INSERT INTO replay_exception_stats({','.join(upsert_row.keys())})
+            VALUES ({','.join(repr(v) for v in upsert_row.values())})
+            """
+            logger.warning(sql)
+            curse.execute(sql)
     finally:
         curse.close()
+
     return 0
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-t', '--trace', help='Which trace the session to run is in', required=True)
-    parser.add_argument('-s', '--session', help='Which session to run', required=True)
+    parser.add_argument('-t', '--trace', type=int, help='Which trace the session to run is in', required=True)
+    parser.add_argument('-s', '--session', type=int, help='Which session to run', required=True)
     parser.add_argument('--use-nbsafety', '--nbsafety', action='store_true', help='Whether to use nbsafety')
     parser.add_argument('--log-to-stderr', '--stderr', action='store_true', help='Whether to log to stderr')
     parser.add_argument('--just-log-files', action='store_true', help='If true, just log paths of files w/out running')

@@ -1,16 +1,27 @@
 # -*- coding: utf-8 -*-
 import ast
 import logging
+import os
 import re
+
+os_path_join = os.path.join
 
 logger = logging.getLogger(__name__)
 
 PATH_SEP = r'[/\\]'
 
 # usage: .match(s).group(3)
-LINUX_PATH_RE = re.compile(r'^{s}?((\w|-|_| |\.)+{s})*((\w|-|_| |\.)+(\.\w\w\w))$'.format(s=PATH_SEP))
+LINUX_PATH_RE = re.compile(r'^{s}?((\w|-|_| |\.)+{s})*((\w|-|_| |\.)+(\.\w+))$'.format(s=PATH_SEP))
 # usage: .match(s).group(4)
-WINDOWS_PATH_RE = re.compile(r'^(\w:{s}{s}?)?((\w|-|_| |\.)+{s})*((\w|-|_| |\.)+(\.\w\w\w))$'.format(s=PATH_SEP))
+WINDOWS_PATH_RE = re.compile(r'^(\w:{s}{s}?)?((\w|-|_| |\.)+{s})*((\w|-|_| |\.)+(\.\w+))$'.format(s=PATH_SEP))
+
+AD_HOC_FILES = {
+    'authors',
+    'books'
+    'details',
+    'ratings',
+    'SMSSpamCollection'
+}
 
 
 def make_matcher(regex, group):
@@ -50,18 +61,21 @@ class FilenameExtractTransformer(ast.NodeTransformer):
         self.file_names = set()
 
     def visit_Str(self, node):
-        if 'train' in node.s or 'test' in node.s:
+        if ('train' in node.s or 'test' in node.s) and ' ' not in node.s:
+            node.s = os_path_join('data', 'transient', node.s)
             logger.warning('file:::%s', node.s)
             return node
         match = LINUX_MATCHER(node.s)
         if match is not None:
             logger.warning('file:::%s', match)
-            node.s = match
+            node.s = os_path_join('data', 'transient', match)
             self.file_names.add(node.s)
         else:
             match = WINDOWS_MATCHER(node.s)
+            if match is None and node.s in AD_HOC_FILES:
+                match = node.s
             if match is not None:
                 logger.warning('file:::%s', match)
-                node.s = match
+                node.s = os_path_join('data', 'transient', match)
                 self.file_names.add(node.s)
         return node
