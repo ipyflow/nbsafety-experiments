@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 
 FILTER_PATTERNS = [
     '%get_ipython().magic(%run%',
+    '%get_ipython().magic(%load%',
     '%get_ipython().run_line_magic(%run%',
+    '%get_ipython().run_line_magic(%load%',
     '%pd.read_csv(%data%',
     '%keras%',
     '%pyspark%',
@@ -22,6 +24,7 @@ FILTER_PATTERNS = [
     '%from magic import%',
     '%import magic%',
     '%plotly%',
+    '%正常NST%'
 ]
 
 
