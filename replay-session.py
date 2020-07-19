@@ -67,10 +67,11 @@ def setup_logging(log_to_stderr=True):
 def make_cell_counter():
     current = 0
 
-    def _counter():
+    def _counter(increment=True):
         nonlocal current
         ret = current
-        current += 1
+        if increment:
+            current += 1
         return ret
     return _counter
 
@@ -221,12 +222,14 @@ ORDER BY counter ASC
     # get_ipython().ast_transformers.extend([ExceptionWrapTransformer(), filename_extractor])
     get_ipython().ast_transformers.extend([filename_extractor])
     session_had_safety_errors = False
-    exec_count = 0
+    exec_count_orig = 0
+    exec_count_replay = 0
+    exec_count_replay_successes = 0
     notebook_state = {}
     for cell_source in cell_submissions:
         lines = cell_source.split('\n')
         new_lines = []
-        exec_count += 1
+        exec_count_orig += 1
         for line in lines:
             if line.startswith('get_ipython()'):
                 if 'pylab' not in line and ('time' not in line or 'timedelta' in line):
@@ -240,11 +243,12 @@ ORDER BY counter ASC
 try:
 {cell_source}
 except Exception as e:
+    exec_count_replay_successes -= 1
     should_test_prediction = False
     import traceback
     logger.error('An exception occurred: %s', e)
     logger.warning(traceback.format_exc())""".strip()
-        logger.info('About to run cell %d (cell counter %d)', cell_id, exec_count)
+        logger.info('About to run cell %d (cell counter %d)', cell_id, exec_count_orig)
         try:
             cell_source = black.format_file_contents(cell_source, fast=False, mode=black.FileMode())
         except:  # noqa
@@ -256,11 +260,13 @@ except Exception as e:
         this_cell_had_safety_errors = False
         should_test_prediction = True
         try:
+            exec_count_replay += 1
             this_cell_had_safety_errors = timeout_run_cell(cell_id, cell_source, safety=safety)
             session_had_safety_errors = session_had_safety_errors or this_cell_had_safety_errors
         except:
             should_test_prediction = False
         finally:
+            exec_count_replay_successes += should_test_prediction
             os.path.join = os_path_join
 
         if predicted_cells is not None and len(predicted_cells) > 0 and safety is not None and cell_id != prev_cell_id and cell_id in notebook_state:
@@ -294,6 +300,28 @@ except Exception as e:
     logger.error('Narrowed down choices to %d of %d possible', specificity_num, specificity_den)
     logger.error('New only correct predictions: %d of %d attempted', new_only_correct_predictions, attempted_predictions)
     logger.error('Narrowed down new only choices to %d of %d possible', new_only_specificity_num, new_only_specificity_den)
+    upsert_row = dict(
+        trace=args.trace,
+        session=args.session,
+        correct_preds=correct_predictions,
+        correct_preds_from_new_or_refresher=new_only_correct_predictions,
+        attempted_preds=attempted_predictions,
+        total_choices_available=specificity_num,
+        total_cells_available=specificity_den,
+        total_choices_available_new_or_refresher=new_only_specificity_num,
+        total_cells_available_new_or_refresher=new_only_specificity_den,
+        num_cell_execs=exec_count_replay,
+        num_successful_cell_execs=exec_count_replay_successes,
+        num_cells_created=get_new_cell_id(increment=False)
+    )
+    try:
+        curse = conn.cursor()
+        curse.execute(f"""
+        INSERT OR REPLACE INTO replay_stats({','.join(upsert_row.keys())})
+        VALUES ({','.join(str(v) for v in upsert_row.values())})
+        """)
+    finally:
+        curse.close()
     return 0
 
 
@@ -317,5 +345,6 @@ if __name__ == '__main__':
         logger.error('Exception occurred in outer context: %s', e)
         ret = 1
     finally:
+        conn.commit()
         conn.close()
         sys.exit(ret)
