@@ -6,6 +6,7 @@ import black
 import collections
 import contextlib
 import logging
+import numpy as np
 import os
 import shutil
 import subprocess
@@ -217,6 +218,8 @@ ORDER BY counter ASC
     specificity_den = 0
     new_only_specificity_num = 0
     new_only_specificity_den = 0
+    expected_correct_random_guesses_live_choices = []
+    expected_correct_random_guesses_new_or_refresher_choices = []
     prev_cell_id = None
     predicted_cells = set()
     prev_predicted_cells = set()
@@ -288,14 +291,17 @@ except Exception as e:
             if should_test_prediction and not this_cell_had_safety_errors:
                 attempted_predictions += 1
                 correct_predictions += cell_id in predicted_cells
+                expected_correct_random_guesses_live_choices.append(float(len(predicted_cells)) / len(notebook_state))
                 if cell_id in predicted_cells:
                     specificity_num += len(predicted_cells)
                     specificity_den += len(notebook_state)
                 new_predicted_cells = predicted_cells - prev_predicted_cells
                 new_only_correct_predictions += cell_id in new_predicted_cells
-                if cell_id in new_predicted_cells | refresher_cells:
+                new_or_refresher_predicted_cells = new_predicted_cells | refresher_cells
+                if cell_id in new_or_refresher_predicted_cells:
                     new_only_specificity_num += len(new_predicted_cells)
                     new_only_specificity_den += len(notebook_state)
+                expected_correct_random_guesses_new_or_refresher_choices.append(float(len(new_predicted_cells)) / len(notebook_state))
                 # predicted_cells.discard(cell_id)
 
         prev_predicted_cells = predicted_cells
@@ -331,6 +337,19 @@ except Exception as e:
         num_exceptions=num_exceptions,
         num_safety_errors=num_safety_errors
     )
+    if len(expected_correct_random_guesses_live_choices) > 0:
+        expected_correct_random_guesses_live_choices = np.array(expected_correct_random_guesses_live_choices)
+        upsert_row['predictive_power_live_cells'] = (
+                float(correct_predictions)
+                / len(expected_correct_random_guesses_live_choices)
+                / np.mean(expected_correct_random_guesses_live_choices)
+        )
+    if len(expected_correct_random_guesses_new_or_refresher_choices) > 0:
+        upsert_row['predictive_power_new_or_refresher_cells'] = (
+                float(new_only_correct_predictions)
+                / len(expected_correct_random_guesses_new_or_refresher_choices)
+                / np.mean(expected_correct_random_guesses_new_or_refresher_choices)
+        )
     curse = conn.cursor()
     try:
         sql = f"""
