@@ -32,7 +32,10 @@ FILTER_PATTERNS = [
     '%from magic import%',
     '%import magic%',
     '%plotly%',
-    '%正常NST%'
+    '%正常NST%',
+    '%os.system%',
+    '%os.walk%',
+    '%nmap%',
 ]
 
 
@@ -70,7 +73,7 @@ def main(args, conn):
         curse.close()
     for idx, (trace, session) in enumerate(results):
         logger.info('Running trace %d session, %d (%d of %d total)', trace, session, idx + 1, len(results))
-        session_ret = subprocess.call(f'./replay-session.py -- -t {trace} -s {session} --nbsafety', shell=True)
+        session_ret = subprocess.call(f'./replay-session.py -- -t {trace} -s {session} -v {args.version} --nbsafety', shell=True)
         if session_ret != 0:
             logger.warning('trace %d, session %d got nonzero return code %d', trace, session, session_ret)
         ret += session_ret
@@ -80,6 +83,7 @@ def main(args, conn):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--min-cells', type=int, default=50)
+    parser.add_argument('-v', '--version', type=int, required=True)
     args = parser.parse_args()
     ret = 0
     conn = sqlite3.connect('./data/traces.sqlite')

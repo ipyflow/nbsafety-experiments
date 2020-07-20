@@ -6,6 +6,7 @@ import black
 import collections
 import contextlib
 import logging
+import numpy
 import numpy as np
 import os
 import shutil
@@ -21,6 +22,7 @@ except ImportError:
     from fuzzyset import FuzzySet
 
 from ast_utils import FilenameExtractTransformer, GatherImports
+from replay_stats_group import ReplayStatsGroup
 from resolvers import PipResolver
 from timeout import timeout
 
@@ -90,6 +92,37 @@ def my_path_joiner(a, *p):
     else:
         fname = a.split('/')[-1]
     return os_path_join('data', 'transient', fname)
+
+
+np_load = np.load
+np_save = np.save
+np_savez = np.savez
+
+
+def my_np_load(fname, *args, **kwargs):
+    if 'data/transient' not in fname:
+        fname = os_path_join('data', 'transient', fname)
+    return np_load(fname, *args, **kwargs)
+
+
+def my_np_save(fname, *args, **kwargs):
+    if 'data/transient' not in fname:
+        fname = os_path_join('data', 'transient', fname)
+    return np_save(fname, *args, **kwargs)
+
+
+def my_np_savez(fname, *args, **kwargs):
+    if 'data/transient' not in fname:
+        fname = os_path_join('data', 'transient', fname)
+    return np_savez(fname, *args, **kwargs)
+
+
+np.load = my_np_load
+numpy.load = my_np_load
+np.save = my_np_save
+numpy.save = my_np_save
+np.savez = my_np_savez
+numpy.savez = my_np_savez
 
 
 def input(*args, **kwargs):
@@ -211,19 +244,18 @@ ORDER BY counter ASC
     if args.just_log_imports:
         return 0
 
-    correct_predictions = 0
-    new_only_correct_predictions = 0
-    attempted_predictions = 0
-    specificity_num = 0
-    specificity_den = 0
-    new_only_specificity_num = 0
-    new_only_specificity_den = 0
-    expected_correct_random_guesses_live_choices = []
-    expected_correct_random_guesses_new_or_refresher_choices = []
+    live_stats = ReplayStatsGroup('live_cells')
+    new_live_stats = ReplayStatsGroup('new_live_cells')
+    new_or_refresher_stats = ReplayStatsGroup('new_or_refresher_cells')
+    refresher_stats = ReplayStatsGroup('refresher_cells')
+    stale_stats = ReplayStatsGroup('stale_cells')
+    all_stats_groups = [live_stats, new_live_stats, new_or_refresher_stats, refresher_stats, stale_stats]
+
     prev_cell_id = None
-    predicted_cells = set()
-    prev_predicted_cells = set()
-    refresher_cells = set()
+    live_cells = None
+    stale_cells = None
+    refresher_cells = None
+    prev_live_cells = set()
 
     get_ipython().run_line_magic('matplotlib', 'inline')
     get_ipython().run_cell('import numpy as np', silent=True)
@@ -287,29 +319,28 @@ except Exception as e:
             exec_count_replay_successes += should_test_prediction
             os.path.join = os_path_join
 
-        if predicted_cells is not None and len(predicted_cells) > 0 and safety is not None and cell_id != prev_cell_id and cell_id in notebook_state:
+        if safety is not None and prev_cell_id is not None and cell_id != prev_cell_id and cell_id in notebook_state:
             if should_test_prediction and not this_cell_had_safety_errors:
-                attempted_predictions += 1
-                correct_predictions += cell_id in predicted_cells
-                expected_correct_random_guesses_live_choices.append(float(len(predicted_cells)) / len(notebook_state))
-                if cell_id in predicted_cells:
-                    specificity_num += len(predicted_cells)
-                    specificity_den += len(notebook_state)
-                new_predicted_cells = predicted_cells - prev_predicted_cells
-                new_only_correct_predictions += cell_id in new_predicted_cells
-                new_or_refresher_predicted_cells = new_predicted_cells | refresher_cells
-                if cell_id in new_or_refresher_predicted_cells:
-                    new_only_specificity_num += len(new_predicted_cells)
-                    new_only_specificity_den += len(notebook_state)
-                expected_correct_random_guesses_new_or_refresher_choices.append(float(len(new_predicted_cells)) / len(notebook_state))
-                # predicted_cells.discard(cell_id)
+                assert live_cells is not None
+                assert stale_cells is not None
+                assert refresher_cells is not None
 
-        prev_predicted_cells = predicted_cells
+                num_available_cells = len(notebook_state)
+                live_stats.update(cell_id, live_cells, num_available_cells)
+                new_live_cells = live_cells - prev_live_cells
+                new_live_stats.update(cell_id, new_live_cells, num_available_cells)
+                refresher_stats.update(cell_id, refresher_cells, num_available_cells)
+                new_or_refresher_stats.update(cell_id, refresher_cells | new_live_cells, num_available_cells)
+                stale_stats.update(cell_id, stale_cells, num_available_cells)
+
+        prev_live_cells = live_cells
+        assert cell_id is not None
         notebook_state[cell_id] = cell_source
         if safety is not None:
             precheck = safety.multicell_precheck(notebook_state)
+            live_cells = set(precheck['stale_output_cells'])
+            stale_cells = set(precheck['stale_input_cells'])
             refresher_cells = set(precheck['refresher_links'].keys())
-            predicted_cells = set(precheck['stale_output_cells']) | refresher_cells
         prev_cell_id = cell_id
 
 
@@ -317,39 +348,22 @@ except Exception as e:
         logger.error('Session had %d safety errors!', num_safety_errors)
     else:
         logger.error('No safety errors detected in session.')
-    logger.error('Correct predictions: %d of %d attempted', correct_predictions, attempted_predictions)
-    logger.error('Narrowed down choices to %d of %d possible', specificity_num, specificity_den)
-    logger.error('New only correct predictions: %d of %d attempted', new_only_correct_predictions, attempted_predictions)
-    logger.error('Narrowed down new only choices to %d of %d possible', new_only_specificity_num, new_only_specificity_den)
+
+    if args.no_stats_logging:
+        return 0
+
     upsert_row = dict(
+        version=args.version,
         trace=args.trace,
         session=args.session,
-        correct_preds=correct_predictions,
-        correct_preds_from_new_or_refresher=new_only_correct_predictions,
-        attempted_preds=attempted_predictions,
-        total_choices_available=specificity_num,
-        total_cells_available=specificity_den,
-        total_choices_available_new_or_refresher=new_only_specificity_num,
-        total_cells_available_new_or_refresher=new_only_specificity_den,
         num_cell_execs=exec_count_replay,
         num_successful_cell_execs=exec_count_replay_successes,
         num_cells_created=get_new_cell_id(increment=False),
         num_exceptions=num_exceptions,
         num_safety_errors=num_safety_errors
     )
-    if len(expected_correct_random_guesses_live_choices) > 0:
-        expected_correct_random_guesses_live_choices = np.array(expected_correct_random_guesses_live_choices)
-        upsert_row['predictive_power_live_cells'] = (
-                float(correct_predictions)
-                / len(expected_correct_random_guesses_live_choices)
-                / np.mean(expected_correct_random_guesses_live_choices)
-        )
-    if len(expected_correct_random_guesses_new_or_refresher_choices) > 0:
-        upsert_row['predictive_power_new_or_refresher_cells'] = (
-                float(new_only_correct_predictions)
-                / len(expected_correct_random_guesses_new_or_refresher_choices)
-                / np.mean(expected_correct_random_guesses_new_or_refresher_choices)
-        )
+    for stats_group in all_stats_groups:
+        upsert_row.update(stats_group.make_dict())
     curse = conn.cursor()
     try:
         sql = f"""
@@ -382,6 +396,7 @@ except Exception as e:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('-v', '--version', type=int, default=-1)
     parser.add_argument('-t', '--trace', type=int, help='Which trace the session to run is in', required=True)
     parser.add_argument('-s', '--session', type=int, help='Which session to run', required=True)
     parser.add_argument('--use-nbsafety', '--nbsafety', action='store_true', help='Whether to use nbsafety')
@@ -389,6 +404,7 @@ if __name__ == '__main__':
     parser.add_argument('--just-log-files', action='store_true', help='If true, just log paths of files w/out running')
     parser.add_argument('--just-log-imports', action='store_true', help='If true, just log imports w/out running')
     parser.add_argument('--write-session-file', action='store_true', help='If write session to session.py')
+    parser.add_argument('--no-stats-logging', action='store_true', help='No writing to db tables if true')
     args = parser.parse_args()
     setup_logging(log_to_stderr=args.log_to_stderr)
     conn = sqlite3.connect('./data/traces.sqlite')
