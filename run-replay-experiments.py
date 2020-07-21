@@ -17,6 +17,7 @@ FILTER_PATTERNS = [
     '%get_ipython().run_line_magic(%run%',
     '%get_ipython().run_line_magic(%load%',
     '%pd.read_csv(%data%',
+    '%xls%',
     '%keras%',
     '%subprocess%',
     '%shutil%',
@@ -27,6 +28,7 @@ FILTER_PATTERNS = [
     '%mysql%',
     '%cuda%',
     '%requests%',  # TODO: check
+    '%codecs%',  # TODO: check
     '%grader%',
     '%threading%',
     '%from magic import%',
@@ -35,7 +37,15 @@ FILTER_PATTERNS = [
     '%正常NST%',
     '%os.system%',
     '%os.walk%',
+    '%glob%',
     '%nmap%',
+    '%turtle%',
+    '%weights2.tsv%',
+    '%all.lsa.s21.list%',
+    '%pwcKyotoAll.en%',
+    '%update_chis.sh%',
+    '%DR1_clean_band_RFI_Pr_Data.csv%',
+    '%MeerKAT_anntenna_pair_length.csv%',
 ]
 
 

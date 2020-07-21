@@ -61,6 +61,8 @@ class FilenameExtractTransformer(ast.NodeTransformer):
         self.file_names = set()
 
     def visit_Str(self, node):
+        if 'figure.' in node.s:
+            return node
         if ('train' in node.s or 'test' in node.s) and ' ' not in node.s:
             node.s = os_path_join('data', 'transient', node.s)
             logger.warning('file:::%s', node.s)

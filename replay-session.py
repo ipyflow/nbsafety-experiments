@@ -244,12 +244,13 @@ ORDER BY counter ASC
     if args.just_log_imports:
         return 0
 
+    next_stats = ReplayStatsGroup('next_cell')
     live_stats = ReplayStatsGroup('live_cells')
     new_live_stats = ReplayStatsGroup('new_live_cells')
     new_or_refresher_stats = ReplayStatsGroup('new_or_refresher_cells')
     refresher_stats = ReplayStatsGroup('refresher_cells')
     stale_stats = ReplayStatsGroup('stale_cells')
-    all_stats_groups = [live_stats, new_live_stats, new_or_refresher_stats, refresher_stats, stale_stats]
+    all_stats_groups = [next_stats, live_stats, new_live_stats, new_or_refresher_stats, refresher_stats, stale_stats]
 
     prev_cell_id = None
     live_cells = None
@@ -326,12 +327,15 @@ except Exception as e:
                 assert refresher_cells is not None
 
                 num_available_cells = len(notebook_state)
-                live_stats.update(cell_id, live_cells, num_available_cells)
-                new_live_cells = live_cells - prev_live_cells
-                new_live_stats.update(cell_id, new_live_cells, num_available_cells)
-                refresher_stats.update(cell_id, refresher_cells, num_available_cells)
-                new_or_refresher_stats.update(cell_id, refresher_cells | new_live_cells, num_available_cells)
-                stale_stats.update(cell_id, stale_cells, num_available_cells)
+                next_stats.update(cell_id, {prev_cell_id + 1}, num_available_cells)
+
+                if cell_id != prev_cell_id + 1:
+                    live_stats.update(cell_id, live_cells, num_available_cells)
+                    new_live_cells = live_cells - prev_live_cells
+                    new_live_stats.update(cell_id, new_live_cells, num_available_cells)
+                    refresher_stats.update(cell_id, refresher_cells, num_available_cells)
+                    new_or_refresher_stats.update(cell_id, refresher_cells | new_live_cells, num_available_cells)
+                    stale_stats.update(cell_id, stale_cells, num_available_cells)
 
         prev_live_cells = live_cells
         assert cell_id is not None
@@ -342,7 +346,6 @@ except Exception as e:
             stale_cells = set(precheck['stale_input_cells'])
             refresher_cells = set(precheck['refresher_links'].keys())
         prev_cell_id = cell_id
-
 
     if num_safety_errors > 0:
         logger.error('Session had %d safety errors!', num_safety_errors)

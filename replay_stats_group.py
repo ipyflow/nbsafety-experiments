@@ -22,12 +22,17 @@ class ReplayStatsGroup(object):
             self.num_cells_at_each_attempt.append(float(len(cell_choices)))
 
     def make_dict(self):
+        ret = {}
         if self.num_attempts == 0:
-            return {}
+            return ret
 
-        return {
+        ret.update({
             f'predictive_power_{self.group_suffix}': self.num_correct / self.pp_micro_den,
             f'macro_predictive_power_{self.group_suffix}': self.pp_macro_sum / self.num_attempts,
-            f'avg_num_{self.group_suffix}': np.mean(self.num_cells_at_each_attempt),
-            f'median_num_{self.group_suffix}': np.median(self.num_cells_at_each_attempt),
-        }
+        })
+        if self.group_suffix != 'next_cell':
+            ret.update({
+                f'avg_num_{self.group_suffix}': np.mean(self.num_cells_at_each_attempt),
+                f'median_num_{self.group_suffix}': np.median(self.num_cells_at_each_attempt),
+            })
+        return ret
