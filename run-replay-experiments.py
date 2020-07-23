@@ -20,6 +20,7 @@ FILTER_PATTERNS = [
     '%xls%',
     '%keras%',
     '%subprocess%',
+    '%readline%',
     '%shutil%',
     '%pyspark%',
     '%pyscopg2%',
@@ -58,29 +59,25 @@ def format_filter_pattern(patt):
 
 
 def main(args, conn):
-    curse = conn.cursor()
+    conn.execute("PRAGMA read_uncommitted = true;")
     ret = 0
-    try:
-        newline = '\n'
-        results = curse.execute(f"""
-    SELECT trace, session
-    FROM cell_execs
-    GROUP BY trace, session
-    HAVING max(counter) >= {args.min_cells} 
-        EXCEPT
-    SELECT *
-    FROM (
-             SELECT trace, session
-             FROM bad_sessions
-             UNION
-             {(
-                newline + 'UNION' + newline
-              ).join(format_filter_pattern(patt) for patt in FILTER_PATTERNS)}
-         )
-        """)
-        results = list(results)
-    finally:
-        curse.close()
+    newline = '\n'
+    results = conn.execute(f"""
+SELECT trace, session
+FROM cell_execs
+GROUP BY trace, session
+HAVING max(counter) >= {args.min_cells} 
+    EXCEPT
+SELECT *
+FROM (
+         SELECT trace, session
+         FROM bad_sessions
+         UNION
+         {(
+            newline + 'UNION' + newline
+          ).join(format_filter_pattern(patt) for patt in FILTER_PATTERNS)}
+     )
+    """).fetchall()
     for idx, (trace, session) in enumerate(results):
         logger.info('Running trace %d session, %d (%d of %d total)', trace, session, idx + 1, len(results))
         session_ret = subprocess.call(f'./replay-session.py -- -t {trace} -s {session} -v {args.version} --nbsafety', shell=True)
@@ -96,7 +93,7 @@ if __name__ == '__main__':
     parser.add_argument('-v', '--version', type=int, required=True)
     args = parser.parse_args()
     ret = 0
-    conn = sqlite3.connect('./data/traces.sqlite')
+    conn = sqlite3.connect('./data/traces.sqlite', timeout=30, isolation_level=None)
     try:
         ret = main(args, conn)
     except:

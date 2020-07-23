@@ -9,6 +9,7 @@ import logging
 import numpy
 import numpy as np
 import os
+import re
 import shutil
 import subprocess
 import sqlite3
@@ -31,6 +32,19 @@ logger = logging.getLogger(__name__)
 CELL_ID_BY_SOURCE = {}
 MATCHING_CELL_THRESHOLD = 0.8
 EXECUTED_CELLS = FuzzySet()
+
+IPYTHON_RE = re.compile(r'^(' + '|'.join([
+    r'get_ipython\(\)\.',
+    r'ip\.',
+    r'ipy\.',
+]) + r')')
+
+LINE_FILTER_RE = re.compile(r'^(' + '|'.join([
+    r'help\(',
+    r'pdb\.',
+    r'set_trace\(',
+    r'ipdb\.',
+]) + r')')
 
 
 @timeout(15)
@@ -175,6 +189,9 @@ def resolve_packages(cell_submissions):
         for pkg in pkg_names:
             imports_by_pkg[pkg].append(import_stmt)
     for pkg, import_stmts in imports_by_pkg.items():
+        # bizarre -- this somehow interferes w/ background process by making it think we're writing to tty
+        if pkg == 'readline':
+            continue
         logger.info('resolving package %s...', pkg)
         resolver = PipResolver(pkg, import_stmts)
         if resolver.resolve():
@@ -206,14 +223,13 @@ should_test_prediction = True
 def main(args, conn):
     global num_exceptions
     global should_test_prediction
-    curse = conn.cursor()
-    cell_submissions = curse.execute(f"""
+    conn.execute("PRAGMA read_uncommitted = true;")
+    cell_submissions = conn.execute(f"""
 SELECT source FROM cell_execs
 WHERE trace = {args.trace} AND session = {args.session}
 ORDER BY counter ASC
-    """)
+    """).fetchall()
     cell_submissions = list(map(lambda t: t[0], cell_submissions))
-    curse.close()
 
     with open('session.py', 'w') as f:
         for idx, cell in enumerate(cell_submissions):
@@ -254,7 +270,7 @@ ORDER BY counter ASC
 
     prev_cell_id = None
     live_cells = None
-    stale_cells = None
+    stale_cells = set()
     refresher_cells = None
     prev_live_cells = set()
 
@@ -279,9 +295,14 @@ ORDER BY counter ASC
         new_lines = []
         exec_count_orig += 1
         for line in lines:
-            if line.startswith('get_ipython()'):
+            stripped = line.strip()
+            match = IPYTHON_RE.match(stripped)
+            if match is not None:
                 if 'pylab' not in line and ('time' not in line or 'timedelta' in line):
                     continue
+            match = LINE_FILTER_RE.match(stripped)
+            if match is not None:
+                continue
             new_lines.append('    ' + line)
         cell_source = '\n'.join(new_lines)
         if cell_source.strip() == '':
@@ -308,10 +329,10 @@ except Exception as e:
             os.path.join = my_path_joiner
         this_cell_had_safety_errors = False
         should_test_prediction = True
+        num_safety_errors += (cell_id in stale_cells)
         try:
             exec_count_replay += 1
             this_cell_had_safety_errors = timeout_run_cell(cell_id, cell_source, safety=safety)
-            num_safety_errors += this_cell_had_safety_errors
         except Exception as outer_e:
             exception_counts[outer_e.__class__.__name__] += 1
             num_exceptions += 1
@@ -329,7 +350,7 @@ except Exception as e:
                 num_available_cells = len(notebook_state)
                 next_stats.update(cell_id, {prev_cell_id + 1}, num_available_cells)
 
-                if cell_id != prev_cell_id + 1:
+                if True:  # cell_id != prev_cell_id + 1:
                     live_stats.update(cell_id, live_cells, num_available_cells)
                     new_live_cells = live_cells - prev_live_cells
                     new_live_stats.update(cell_id, new_live_cells, num_available_cells)
@@ -367,17 +388,17 @@ except Exception as e:
     )
     for stats_group in all_stats_groups:
         upsert_row.update(stats_group.make_dict())
-    curse = conn.cursor()
-    try:
-        sql = f"""
-        INSERT OR REPLACE INTO replay_stats({','.join(upsert_row.keys())})
-        VALUES ({','.join(repr(v) for v in upsert_row.values())})
-        """
-        logger.warning(sql)
-        curse.execute(sql)
-        sql = f'DELETE FROM replay_exception_stats WHERE trace={args.trace} AND session={args.session}'
-        logger.warning(sql)
-        curse.execute(sql)
+    sql = f"""
+    INSERT OR REPLACE INTO replay_stats({','.join(upsert_row.keys())})
+    VALUES ({','.join(repr(v) for v in upsert_row.values())})
+    """
+    logger.warning(sql)
+    with conn:
+        conn.execute(sql)
+    sql = f'DELETE FROM replay_exception_stats WHERE trace={args.trace} AND session={args.session}'
+    logger.warning(sql)
+    with conn:
+        conn.execute(sql)
         for exc_name, exc_count in exception_counts.items():
             upsert_row = dict(
                 trace=args.trace,
@@ -390,10 +411,7 @@ except Exception as e:
             VALUES ({','.join(repr(v) for v in upsert_row.values())})
             """
             logger.warning(sql)
-            curse.execute(sql)
-    finally:
-        curse.close()
-
+            conn.execute(sql)
     return 0
 
 
@@ -410,7 +428,7 @@ if __name__ == '__main__':
     parser.add_argument('--no-stats-logging', action='store_true', help='No writing to db tables if true')
     args = parser.parse_args()
     setup_logging(log_to_stderr=args.log_to_stderr)
-    conn = sqlite3.connect('./data/traces.sqlite')
+    conn = sqlite3.connect('./data/traces.sqlite', timeout=30, isolation_level=None)
     ret = 0
     try:
         with redirect_std_streams_to('/dev/null'):
@@ -419,6 +437,5 @@ if __name__ == '__main__':
         logger.error('Exception occurred in outer context: %s', e)
         ret = 1
     finally:
-        conn.commit()
         conn.close()
         sys.exit(ret)
