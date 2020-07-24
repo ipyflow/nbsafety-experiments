@@ -40,6 +40,10 @@ FILTER_PATTERNS = [
     '%os.walk%',
     '%glob%',
     '%nmap%',
+    '%pygoogle%',
+    '%pymc3%',
+    '%read_login%',
+    '%Exscript%',
     '%turtle%',
     '%weights2.tsv%',
     '%all.lsa.s21.list%',
@@ -76,6 +80,7 @@ FROM (
          {(
             newline + 'UNION' + newline
           ).join(format_filter_pattern(patt) for patt in FILTER_PATTERNS)}
+        {'UNION SELECT trace, session FROM replay_stats WHERE version = ' + str(args.version) if args.skip_already_replayed else ''}
      )
     """).fetchall()
     for idx, (trace, session) in enumerate(results):
@@ -91,6 +96,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--min-cells', type=int, default=50)
     parser.add_argument('-v', '--version', type=int, required=True)
+    parser.add_argument('--skip-already-replayed', action='store_true')
     args = parser.parse_args()
     ret = 0
     conn = sqlite3.connect('./data/traces.sqlite', timeout=30, isolation_level=None)

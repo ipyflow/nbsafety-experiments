@@ -265,14 +265,26 @@ ORDER BY counter ASC
     new_live_stats = ReplayStatsGroup('new_live_cells')
     new_or_refresher_stats = ReplayStatsGroup('new_or_refresher_cells')
     refresher_stats = ReplayStatsGroup('refresher_cells')
+    new_refresher_stats = ReplayStatsGroup('new_refresher_cells')
+    random_like_new_refresher_stats = ReplayStatsGroup('random_like_new_refresher_cells')
     stale_stats = ReplayStatsGroup('stale_cells')
-    all_stats_groups = [next_stats, live_stats, new_live_stats, new_or_refresher_stats, refresher_stats, stale_stats]
+    all_stats_groups = [
+        next_stats,
+        live_stats,
+        new_live_stats,
+        new_or_refresher_stats,
+        refresher_stats,
+        new_refresher_stats,
+        random_like_new_refresher_stats,
+        stale_stats
+    ]
 
     prev_cell_id = None
     live_cells = None
     stale_cells = set()
     refresher_cells = None
     prev_live_cells = set()
+    prev_refresher_cells = set()
 
     get_ipython().run_line_magic('matplotlib', 'inline')
     get_ipython().run_cell('import numpy as np', silent=True)
@@ -356,9 +368,13 @@ except Exception as e:
                     new_live_stats.update(cell_id, new_live_cells, num_available_cells)
                     refresher_stats.update(cell_id, refresher_cells, num_available_cells)
                     new_or_refresher_stats.update(cell_id, refresher_cells | new_live_cells, num_available_cells)
+                    new_refresher_cells = refresher_cells - prev_refresher_cells
+                    new_refresher_stats.update(cell_id, new_refresher_cells, num_available_cells)
+                    random_like_new_refresher_stats.update(cell_id, len(new_refresher_cells), notebook_state.keys())
                     stale_stats.update(cell_id, stale_cells, num_available_cells)
 
         prev_live_cells = live_cells
+        prev_refresher_cells = refresher_cells
         assert cell_id is not None
         notebook_state[cell_id] = cell_source
         if safety is not None:

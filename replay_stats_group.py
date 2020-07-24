@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import random
+
 import numpy as np
 
 
@@ -11,15 +13,20 @@ class ReplayStatsGroup(object):
         self.pp_macro_sum = 0.
         self.num_cells_at_each_attempt = []
 
-    def update(self, cell_id, cell_choices, num_available_choices):
-        if len(cell_choices) > 0:
-            was_correct = float(cell_id in cell_choices)
-            prob_random_correct = float(len(cell_choices) / num_available_choices)
-            self.pp_micro_den += prob_random_correct
-            self.pp_macro_sum += was_correct / prob_random_correct
-            self.num_correct += was_correct
-            self.num_attempts += 1
-            self.num_cells_at_each_attempt.append(float(len(cell_choices)))
+    def update(self, cell_id, cell_choices, available_choices):
+        if isinstance(cell_choices, int):
+            assert not isinstance(available_choices, int)
+            cell_choices = set(random.sample(list(available_choices), cell_choices))
+            available_choices = len(available_choices)
+        if len(cell_choices) == 0:
+            return
+        was_correct = float(cell_id in cell_choices)
+        prob_random_correct = float(len(cell_choices) / available_choices)
+        self.pp_micro_den += prob_random_correct
+        self.pp_macro_sum += was_correct / prob_random_correct
+        self.num_correct += was_correct
+        self.num_attempts += 1
+        self.num_cells_at_each_attempt.append(float(len(cell_choices)))
 
     def make_dict(self):
         ret = {}
