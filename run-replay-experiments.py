@@ -44,6 +44,8 @@ FILTER_PATTERNS = [
     '%pymc3%',
     '%read_login%',
     '%Exscript%',
+    '%import pwn%',
+    '%from pwn import%',
     '%turtle%',
     '%weights2.tsv%',
     '%all.lsa.s21.list%',

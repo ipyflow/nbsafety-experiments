@@ -21,7 +21,7 @@ class ReplayStatsGroup(object):
         if len(cell_choices) == 0:
             return
         was_correct = float(cell_id in cell_choices)
-        prob_random_correct = float(len(cell_choices) / available_choices)
+        prob_random_correct = float(len(cell_choices)) / available_choices
         self.pp_micro_den += prob_random_correct
         self.pp_macro_sum += was_correct / prob_random_correct
         self.num_correct += was_correct
