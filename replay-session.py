@@ -261,6 +261,7 @@ ORDER BY counter ASC
         return 0
 
     next_stats = ReplayStatsGroup('next_cell')
+    random_stats = ReplayStatsGroup('random_cell')
     live_stats = ReplayStatsGroup('live_cells')
     new_live_stats = ReplayStatsGroup('new_live_cells')
     new_or_refresher_stats = ReplayStatsGroup('new_or_refresher_cells')
@@ -268,6 +269,7 @@ ORDER BY counter ASC
     new_refresher_stats = ReplayStatsGroup('new_refresher_cells')
     random_like_new_refresher_stats = ReplayStatsGroup('random_like_new_refresher_cells')
     stale_stats = ReplayStatsGroup('stale_cells')
+    new_stale_stats = ReplayStatsGroup('new_stale_cells')
     all_stats_groups = [
         next_stats,
         live_stats,
@@ -283,6 +285,7 @@ ORDER BY counter ASC
     live_cells = None
     stale_cells = set()
     refresher_cells = None
+    prev_stale_cells = set()
     prev_live_cells = set()
     prev_refresher_cells = set()
 
@@ -354,7 +357,7 @@ except Exception as e:
             os.path.join = os_path_join
 
         if safety is not None and prev_cell_id is not None and cell_id != prev_cell_id and cell_id in notebook_state:
-            if should_test_prediction and not this_cell_had_safety_errors:
+            if should_test_prediction:  # and not this_cell_had_safety_errors:
                 assert live_cells is not None
                 assert stale_cells is not None
                 assert refresher_cells is not None
@@ -363,6 +366,7 @@ except Exception as e:
                 next_stats.update(cell_id, {prev_cell_id + 1}, num_available_cells)
 
                 if True:  # cell_id != prev_cell_id + 1:
+                    random_stats.update(cell_id, 1, notebook_state.keys())
                     live_stats.update(cell_id, live_cells, num_available_cells)
                     new_live_cells = live_cells - prev_live_cells
                     new_live_stats.update(cell_id, new_live_cells, num_available_cells)
@@ -372,7 +376,9 @@ except Exception as e:
                     new_refresher_stats.update(cell_id, new_refresher_cells, num_available_cells)
                     random_like_new_refresher_stats.update(cell_id, len(new_refresher_cells), notebook_state.keys())
                     stale_stats.update(cell_id, stale_cells, num_available_cells)
+                    new_stale_stats.update(cell_id, stale_cells - prev_stale_cells, num_available_cells)
 
+        prev_stale_cells = stale_cells
         prev_live_cells = live_cells
         prev_refresher_cells = refresher_cells
         assert cell_id is not None
