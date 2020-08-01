@@ -272,13 +272,15 @@ ORDER BY counter ASC
     new_stale_stats = ReplayStatsGroup('new_stale_cells')
     all_stats_groups = [
         next_stats,
+        random_stats,
         live_stats,
         new_live_stats,
         new_or_refresher_stats,
         refresher_stats,
         new_refresher_stats,
         random_like_new_refresher_stats,
-        stale_stats
+        stale_stats,
+        new_stale_stats
     ]
 
     prev_cell_id = None

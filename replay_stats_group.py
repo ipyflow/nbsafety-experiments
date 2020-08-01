@@ -19,7 +19,7 @@ class ReplayStatsGroup(object):
             assert not isinstance(available_choices, int)
             cell_choices = set(random.sample(list(available_choices), cell_choices))
             available_choices = len(available_choices)
-        if len(cell_choices) <= 1:
+        if available_choices <= 1:
             return
         was_correct = float(cell_id in cell_choices)
         prob_random_correct = float(len(cell_choices)) / available_choices
