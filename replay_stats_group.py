@@ -19,13 +19,15 @@ class ReplayStatsGroup(object):
             assert not isinstance(available_choices, int)
             cell_choices = set(random.sample(list(available_choices), cell_choices))
             available_choices = len(available_choices)
+        if len(cell_choices) == 0:
+            return
         if available_choices <= 1:
             return
         was_correct = float(cell_id in cell_choices)
         prob_random_correct = float(len(cell_choices)) / available_choices
         self.pp_micro_den += prob_random_correct
         self.pp_macro_sum += was_correct / prob_random_correct
-        self.pp_normalized_sum += ((was_correct / prob_random_correct) - 1.) / (len(cell_choices) - 1.)
+        self.pp_normalized_sum += ((was_correct / prob_random_correct) - 1.) / (available_choices - 1.)
         self.num_correct += was_correct
         self.num_attempts += 1
         self.num_cells_at_each_attempt.append(float(len(cell_choices)))
