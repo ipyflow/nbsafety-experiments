@@ -2,4 +2,9 @@ black
 fuzzyset
 jupytext
 kaggle
+matplotlib
 nbsafety
+numpy
+pandas
+scipy
+seaborn

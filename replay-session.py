@@ -231,24 +231,32 @@ ORDER BY counter ASC
     """).fetchall()
     cell_submissions = list(map(lambda t: t[0], cell_submissions))
 
-    with open('session.py', 'w') as f:
+    session_fname = f'trace-{args.trace}-session-{args.session}.py'
+    with open(session_fname, 'w') as f:
         for idx, cell in enumerate(cell_submissions):
             f.write(f'# + Cell {idx + 1}\n')
             f.write(cell)
             f.write('\n\n')
 
     with open('/dev/null', 'w') as devnull:
-        subprocess.call('2to3 session.py -w', shell=True, stdout=devnull, stderr=subprocess.STDOUT)
+        subprocess.call(f'2to3 {session_fname} -w', shell=True, stdout=devnull, stderr=subprocess.STDOUT)
 
-    if args.write_session_file:
-        shutil.copy('session.py', f'session.{args.trace}.{args.session}.py')
-
-    with open('session.py') as f:
+    with open(session_fname) as f:
         cell_submissions = f.read().split('# + Cell ')
         cell_submissions = map(lambda cell: cell.strip(), cell_submissions)
         cell_submissions = filter(lambda cell: len(cell) > 0, cell_submissions)
         cell_submissions = map(lambda cell: '# + Cell ' + cell, cell_submissions)
         cell_submissions = list(cell_submissions)
+
+    if args.write_session_ipynb:
+        with open('/dev/null', 'w') as devnull:
+            subprocess.call(
+                f'jupytext --to ipynb {session_fname} --output {os.path.splitext(session_fname)[0]}.ipynb',
+                shell=True, stdout=devnull, stderr=subprocess.STDOUT
+            )
+
+    if not args.write_session_file:
+        os.remove(session_fname)
 
     filename_extractor = resolve_files(cell_submissions)
     if args.just_log_files:
@@ -448,7 +456,8 @@ if __name__ == '__main__':
     parser.add_argument('--log-to-stderr', '--stderr', action='store_true', help='Whether to log to stderr')
     parser.add_argument('--just-log-files', action='store_true', help='If true, just log paths of files w/out running')
     parser.add_argument('--just-log-imports', action='store_true', help='If true, just log imports w/out running')
-    parser.add_argument('--write-session-file', action='store_true', help='If write session to session.py')
+    parser.add_argument('--write-session-file', action='store_true', help='If true, write session to .py file')
+    parser.add_argument('--write-session-ipynb', action='store_true', help='If true, write session to .ipynb file')
     parser.add_argument('--no-stats-logging', action='store_true', help='No writing to db tables if true')
     args = parser.parse_args()
     setup_logging(log_to_stderr=args.log_to_stderr)
