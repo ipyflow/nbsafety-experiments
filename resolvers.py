@@ -41,8 +41,7 @@ class PipResolver(ImportResolver):
     def _try_imports(self):
         unique_imports = set()
         for import_stmt in self.imports_involving_lib:
-            mod = ast.Module()
-            mod.body = [import_stmt]
+            mod = ast.Module([import_stmt], [])
             unique_imports.add(pickle.dumps(mod))
         logger.info('total unique imports: %d vs %d non-dedupped', len(unique_imports), len(self.imports_involving_lib))
         pickled_import_dir = pathlib.Path('pickled_imports')

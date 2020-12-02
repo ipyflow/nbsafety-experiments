@@ -10,7 +10,6 @@ import numpy
 import numpy as np
 import os
 import re
-import shutil
 import subprocess
 import sqlite3
 import sys
@@ -27,6 +26,7 @@ from replay_stats_group import ReplayStatsGroup
 from resolvers import PipResolver
 from timeout import timeout
 
+logging.basicConfig()
 logger = logging.getLogger(__name__)
 
 CELL_ID_BY_SOURCE = {}
@@ -319,6 +319,7 @@ ORDER BY counter ASC
         lines = cell_source.split('\n')
         new_lines = []
         exec_count_orig += 1
+        num_non_comment_lines = 0
         for line in lines:
             stripped = line.strip()
             match = IPYTHON_RE.match(stripped)
@@ -328,9 +329,11 @@ ORDER BY counter ASC
             match = LINE_FILTER_RE.match(stripped)
             if match is not None:
                 continue
+            if not stripped.startswith('#'):
+                num_non_comment_lines += 1
             new_lines.append('    ' + line)
         cell_source = '\n'.join(new_lines)
-        if cell_source.strip() == '':
+        if cell_source.strip() == '' or num_non_comment_lines == 0:
             continue
         cell_id = get_cell_id_for_source(cell_source)
         cell_source = f"""
