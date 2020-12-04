@@ -26,7 +26,6 @@ from replay_stats_group import ReplayStatsGroup
 from resolvers import PipResolver
 from timeout import timeout
 
-logging.basicConfig()
 logger = logging.getLogger(__name__)
 
 CELL_ID_BY_SOURCE = {}
@@ -58,15 +57,15 @@ def timeout_run_cell(cell_id, cell_source, safety=None):
         return safety.test_and_clear_detected_flag()
 
 
-def setup_logging(log_to_stderr=True):
+def setup_logging(log_to_stderr=True, prefix='session'):
     logger.propagate = False
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(levelname)s:%(name)s:%(message)s')
-    info_handler = logging.FileHandler('session.info.log', mode='w')
+    info_handler = logging.FileHandler(f'{prefix}.info.log', mode='w')
     info_handler.setLevel(logging.INFO)
-    warning_handler = logging.FileHandler('session.warnings.log', mode='w')
+    warning_handler = logging.FileHandler(f'{prefix}.warnings.log', mode='w')
     warning_handler.setLevel(logging.WARNING)
-    error_handler = logging.FileHandler('session.errors.log', mode='w')
+    error_handler = logging.FileHandler(f'{prefix}.errors.log', mode='w')
     error_handler.setLevel(logging.ERROR)
     handlers = [info_handler, warning_handler, error_handler]
     if log_to_stderr:
@@ -239,7 +238,7 @@ ORDER BY counter ASC
             f.write('\n\n')
 
     with open('/dev/null', 'w') as devnull:
-        subprocess.call(f'2to3 {session_fname} -w', shell=True, stdout=devnull, stderr=subprocess.STDOUT)
+        subprocess.call(f'2to3 {session_fname} -w -n', shell=True, stdout=devnull, stderr=subprocess.STDOUT)
 
     with open(session_fname) as f:
         cell_submissions = f.read().split('# + Cell ')
@@ -257,6 +256,9 @@ ORDER BY counter ASC
 
     if not args.write_session_file:
         os.remove(session_fname)
+
+    if args.write_session_ipynb:
+        return 0
 
     filename_extractor = resolve_files(cell_submissions)
     if args.just_log_files:
@@ -347,11 +349,11 @@ except Exception as e:
     logger.error('An exception occurred: %s', e)
     logger.error('%s', e.__class__.__name__)
     logger.warning(traceback.format_exc())""".strip()
-        logger.info('About to run cell %d (cell counter %d)', cell_id, exec_count_orig)
         try:
             cell_source = black.format_file_contents(cell_source, fast=False, mode=black.FileMode())
         except:  # noqa
             pass
+        logger.info('About to run cell %d (cell counter %d)', cell_id, exec_count_orig)
 
         if 'os.path.join' in cell_source and 'IMDb' not in cell_source:
             os.path.join = my_path_joiner
@@ -462,8 +464,9 @@ if __name__ == '__main__':
     parser.add_argument('--write-session-file', action='store_true', help='If true, write session to .py file')
     parser.add_argument('--write-session-ipynb', action='store_true', help='If true, write session to .ipynb file')
     parser.add_argument('--no-stats-logging', action='store_true', help='No writing to db tables if true')
+    parser.add_argument('--logprefix', default='session')
     args = parser.parse_args()
-    setup_logging(log_to_stderr=args.log_to_stderr)
+    setup_logging(log_to_stderr=args.log_to_stderr, prefix=args.logprefix)
     conn = sqlite3.connect('./data/traces.sqlite', timeout=30, isolation_level=None)
     ret = 0
     try:
