@@ -28,9 +28,15 @@ from timeout import timeout
 
 logger = logging.getLogger(__name__)
 
+
+class IdentityDict(dict):
+    __missing__ = lambda self, key: key
+
+
 CELL_ID_BY_SOURCE = {}
 MATCHING_CELL_THRESHOLD = 0.8
 EXECUTED_CELLS = FuzzySet()
+CELL_ORDER_IDX = IdentityDict()
 
 IPYTHON_RE = re.compile(r'^(' + '|'.join([
     r'get_ipython\(\)\.',
@@ -307,6 +313,7 @@ ORDER BY counter ASC
     if args.use_nbsafety:
         import nbsafety.safety
         safety = nbsafety.safety.NotebookSafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)
+        safety.config.backwards_cell_staleness_propagation = not args.forward_only_propagation
         # get_ipython().run_line_magic('safety', 'trace_messages enable')
     else:
         safety = None
@@ -359,6 +366,7 @@ except Exception as e:
             os.path.join = my_path_joiner
         this_cell_had_safety_errors = False
         should_test_prediction = True
+        safety.set_active_cell(cell_id, position_idx=cell_id)
         num_safety_errors += (cell_id in stale_cells)
         try:
             exec_count_replay += 1
@@ -399,7 +407,7 @@ except Exception as e:
         assert cell_id is not None
         notebook_state[cell_id] = cell_source
         if safety is not None:
-            precheck = safety.multicell_precheck(notebook_state)
+            precheck = safety.multicell_precheck(notebook_state, order_index_by_cell_id=CELL_ORDER_IDX)
             live_cells = set(precheck['stale_output_cells'])
             stale_cells = set(precheck['stale_input_cells'])
             refresher_cells = set(precheck['refresher_links'].keys())
@@ -464,6 +472,7 @@ if __name__ == '__main__':
     parser.add_argument('--write-session-file', action='store_true', help='If true, write session to .py file')
     parser.add_argument('--write-session-ipynb', action='store_true', help='If true, write session to .ipynb file')
     parser.add_argument('--no-stats-logging', action='store_true', help='No writing to db tables if true')
+    parser.add_argument('--forward-only-propagation', action='store_true', help='Only propagate staleness forwards if true')
     parser.add_argument('--logprefix', default='session')
     args = parser.parse_args()
     setup_logging(log_to_stderr=args.log_to_stderr, prefix=args.logprefix)

@@ -86,9 +86,13 @@ FROM (
         {'UNION SELECT trace, session FROM replay_stats WHERE version = ' + str(args.version) if args.skip_already_replayed else ''}
      )
     """).fetchall()
+    command_template = './replay-session.py -- -t {trace} -s {session} -v {version} --nbsafety'
+    if args.forward_only_propagation:
+        command_template += ' --forward-only-propagation'
     for idx, (trace, session) in enumerate(results):
         logger.info('Running trace %d session, %d (%d of %d total)', trace, session, idx + 1, len(results))
-        session_ret = subprocess.call(f'./replay-session.py -- -t {trace} -s {session} -v {args.version} --nbsafety', shell=True)
+        command = command_template.format(trace=trace, session=session, version=args.version)
+        session_ret = subprocess.call(command, shell=True)
         if session_ret != 0:
             logger.warning('trace %d, session %d got nonzero return code %d', trace, session, session_ret)
         ret += session_ret
@@ -100,6 +104,7 @@ if __name__ == '__main__':
     parser.add_argument('--min-cells', type=int, default=50)
     parser.add_argument('-v', '--version', type=int, required=True)
     parser.add_argument('--skip-already-replayed', action='store_true')
+    parser.add_argument('--forward-only-propagation', action='store_true', help='Only propagate staleness forwards if true')
     args = parser.parse_args()
     ret = 0
     conn = sqlite3.connect('./data/traces.sqlite', timeout=30, isolation_level=None)
