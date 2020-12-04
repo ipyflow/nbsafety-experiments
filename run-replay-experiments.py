@@ -53,6 +53,7 @@ FILTER_PATTERNS = [
     '%update_chis.sh%',
     '%DR1_clean_band_RFI_Pr_Data.csv%',
     '%MeerKAT_anntenna_pair_length.csv%',
+    '%pyiron%',
 ]
 
 
