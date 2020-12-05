@@ -13,6 +13,8 @@ import re
 import subprocess
 import sqlite3
 import sys
+from timeit import default_timer as timer
+
 
 from IPython import get_ipython
 
@@ -32,11 +34,13 @@ logger = logging.getLogger(__name__)
 class IdentityDict(dict):
     __missing__ = lambda self, key: key
 
+    def get(self, x, default):
+        return self[x]
+
 
 CELL_ID_BY_SOURCE = {}
 MATCHING_CELL_THRESHOLD = 0.8
 EXECUTED_CELLS = FuzzySet()
-CELL_ORDER_IDX = IdentityDict()
 
 IPYTHON_RE = re.compile(r'^(' + '|'.join([
     r'get_ipython\(\)\.',
@@ -58,7 +62,7 @@ def timeout_run_cell(cell_id, cell_source, safety=None):
         get_ipython().run_cell(cell_source, silent=True)
         return False
     else:
-        safety.set_active_cell(cell_id)
+        safety.set_active_cell(cell_id, position_idx=cell_id)
         get_ipython().run_cell_magic(safety.cell_magic_name, None, cell_source)
         return safety.test_and_clear_detected_flag()
 
@@ -225,9 +229,23 @@ exception_counts = collections.Counter()
 should_test_prediction = True
 
 
+def discard_highlights_after_position(highlight_set, pos_idx):
+    to_discard = []
+    for cell_id in highlight_set:
+        if cell_id >= pos_idx:
+            to_discard.append(cell_id)
+    for cell_id in to_discard:
+        highlight_set.discard(cell_id)
+
+
 def main(args, conn):
     global num_exceptions
     global should_test_prediction
+    if args.forward_only_propagation:
+        cell_order_idx = IdentityDict()
+    else:
+        cell_order_idx = None
+    total_time = 0.
     conn.execute("PRAGMA read_uncommitted = true;")
     cell_submissions = conn.execute(f"""
 SELECT source FROM cell_execs
@@ -300,9 +318,9 @@ ORDER BY counter ASC
     ]
 
     prev_cell_id = None
-    live_cells = None
+    live_cells = set()
     stale_cells = set()
-    refresher_cells = None
+    refresher_cells = set()
     prev_stale_cells = set()
     prev_live_cells = set()
     prev_refresher_cells = set()
@@ -314,6 +332,7 @@ ORDER BY counter ASC
         import nbsafety.safety
         safety = nbsafety.safety.NotebookSafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)
         safety.config.backwards_cell_staleness_propagation = not args.forward_only_propagation
+        logger.info('backwards staleness propagation: %s' % safety.config.backwards_cell_staleness_propagation)
         # get_ipython().run_line_magic('safety', 'trace_messages enable')
     else:
         safety = None
@@ -366,11 +385,13 @@ except Exception as e:
             os.path.join = my_path_joiner
         this_cell_had_safety_errors = False
         should_test_prediction = True
-        safety.set_active_cell(cell_id, position_idx=cell_id)
         num_safety_errors += (cell_id in stale_cells)
         try:
             exec_count_replay += 1
+
+            start_time = timer()
             this_cell_had_safety_errors = timeout_run_cell(cell_id, cell_source, safety=safety)
+            total_time += timer() - start_time
         except Exception as outer_e:
             exception_counts[outer_e.__class__.__name__] += 1
             num_exceptions += 1
@@ -381,9 +402,9 @@ except Exception as e:
 
         if safety is not None and prev_cell_id is not None and cell_id != prev_cell_id and cell_id in notebook_state:
             if should_test_prediction:  # and not this_cell_had_safety_errors:
-                assert live_cells is not None
-                assert stale_cells is not None
-                assert refresher_cells is not None
+                # assert live_cells is not None
+                # assert stale_cells is not None
+                # assert refresher_cells is not None
 
                 num_available_cells = len(notebook_state)
                 next_stats.update(cell_id, {prev_cell_id + 1}, num_available_cells)
@@ -401,16 +422,22 @@ except Exception as e:
                     stale_stats.update(cell_id, stale_cells, num_available_cells)
                     new_stale_stats.update(cell_id, stale_cells - prev_stale_cells, num_available_cells)
 
-        prev_stale_cells = stale_cells
-        prev_live_cells = live_cells
-        prev_refresher_cells = refresher_cells
+        prev_stale_cells = set(stale_cells)
+        prev_live_cells = set(live_cells)
+        prev_refresher_cells = set(refresher_cells)
         assert cell_id is not None
         notebook_state[cell_id] = cell_source
         if safety is not None:
-            precheck = safety.multicell_precheck(notebook_state, order_index_by_cell_id=CELL_ORDER_IDX)
-            live_cells = set(precheck['stale_output_cells'])
-            stale_cells = set(precheck['stale_input_cells'])
-            refresher_cells = set(precheck['refresher_links'].keys())
+            for highlight_set in (live_cells, stale_cells, refresher_cells):
+                discard_highlights_after_position(highlight_set, cell_id)
+            # logger.info('active pos: %d', safety.active_cell_position_idx)
+            precheck = safety.multicell_precheck(notebook_state, order_index_by_cell_id=cell_order_idx)
+            live_cells |= set(precheck['stale_output_cells'])
+            # logger.info('live cells: %s', live_cells)
+            stale_cells |= set(precheck['stale_input_cells'])
+            # logger.info('stale cells: %s', stale_cells)
+            refresher_cells |= set(precheck['refresher_links'].keys())
+            # logger.info('refresher cells: %s', refresher_cells)
         prev_cell_id = cell_id
 
     if num_safety_errors > 0:
@@ -429,7 +456,8 @@ except Exception as e:
         num_successful_cell_execs=exec_count_replay_successes,
         num_cells_created=get_new_cell_id(increment=False),
         num_exceptions=num_exceptions,
-        num_safety_errors=num_safety_errors
+        num_safety_errors=num_safety_errors,
+        wall_time=total_time,
     )
     for stats_group in all_stats_groups:
         upsert_row.update(stats_group.make_dict())
