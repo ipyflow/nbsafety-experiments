@@ -86,7 +86,9 @@ FROM (
         {'UNION SELECT trace, session FROM replay_stats WHERE version = ' + str(args.version) if args.skip_already_replayed else ''}
      )
     """).fetchall()
-    command_template = './replay-session.py -- -t {trace} -s {session} -v {version} --nbsafety'
+    command_template = './replay-session.py -- -t {trace} -s {session} -v {version}'
+    if not args.no_nbsafety:
+        command_template += ' --nbsafety'
     if args.forward_only_propagation:
         command_template += ' --forward-only-propagation'
     for idx, (trace, session) in enumerate(results):
@@ -105,6 +107,7 @@ if __name__ == '__main__':
     parser.add_argument('-v', '--version', type=int, required=True)
     parser.add_argument('--skip-already-replayed', action='store_true')
     parser.add_argument('--forward-only-propagation', action='store_true', help='Only propagate staleness forwards if true')
+    parser.add_argument('--no-nbsafety', action='store_true', help='if true, run without nbsafety')
     args = parser.parse_args()
     ret = 0
     conn = sqlite3.connect('./data/traces.sqlite', timeout=30, isolation_level=None)
