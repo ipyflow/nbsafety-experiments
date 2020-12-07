@@ -333,6 +333,8 @@ ORDER BY counter ASC
         safety = nbsafety.safety.NotebookSafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)
         safety.config.backwards_cell_staleness_propagation = not args.forward_only_propagation
         logger.info('backwards staleness propagation: %s' % safety.config.backwards_cell_staleness_propagation)
+        safety.config.naive_refresher_computation = args.naive_refresher_computation
+        logger.info('naive refresher computation: %s' % safety.config.naive_refresher_computation)
         # get_ipython().run_line_magic('safety', 'trace_messages enable')
     else:
         safety = None
@@ -431,10 +433,10 @@ except Exception as e:
             for highlight_set in (live_cells, stale_cells, refresher_cells):
                 discard_highlights_after_position(highlight_set, cell_id)
             # logger.info('active pos: %d', safety.active_cell_position_idx)
-            precheck = safety.multicell_precheck(notebook_state, order_index_by_cell_id=cell_order_idx)
-            live_cells |= set(precheck['stale_output_cells'])
+            precheck = safety.check_and_link_multiple_cells(notebook_state, order_index_by_cell_id=cell_order_idx)
+            live_cells |= set(precheck['fresh_cells'])
             # logger.info('live cells: %s', live_cells)
-            stale_cells |= set(precheck['stale_input_cells'])
+            stale_cells |= set(precheck['stale_cells'])
             # logger.info('stale cells: %s', stale_cells)
             refresher_cells |= set(precheck['refresher_links'].keys())
             # logger.info('refresher cells: %s', refresher_cells)
@@ -501,6 +503,7 @@ if __name__ == '__main__':
     parser.add_argument('--write-session-ipynb', action='store_true', help='If true, write session to .ipynb file')
     parser.add_argument('--no-stats-logging', action='store_true', help='No writing to db tables if true')
     parser.add_argument('--forward-only-propagation', action='store_true', help='Only propagate staleness forwards if true')
+    parser.add_argument('--naive-refresher-computation', action='store_true', help='Use quadratic refresher computation if true')
     parser.add_argument('--logprefix', default='session')
     args = parser.parse_args()
     setup_logging(log_to_stderr=args.log_to_stderr, prefix=args.logprefix)

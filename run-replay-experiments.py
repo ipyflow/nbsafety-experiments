@@ -91,6 +91,8 @@ FROM (
         command_template += ' --nbsafety'
     if args.forward_only_propagation:
         command_template += ' --forward-only-propagation'
+    if args.naive_refresher_computation:
+        command_template += ' --naive-refresher-computation'
     for idx, (trace, session) in enumerate(results):
         logger.info('Running trace %d session, %d (%d of %d total)', trace, session, idx + 1, len(results))
         command = command_template.format(trace=trace, session=session, version=args.version)
@@ -107,6 +109,7 @@ if __name__ == '__main__':
     parser.add_argument('-v', '--version', type=int, required=True)
     parser.add_argument('--skip-already-replayed', action='store_true')
     parser.add_argument('--forward-only-propagation', action='store_true', help='Only propagate staleness forwards if true')
+    parser.add_argument('--naive-refresher-computation', action='store_true', help='Use quadratic refresher computation if true')
     parser.add_argument('--no-nbsafety', action='store_true', help='if true, run without nbsafety')
     args = parser.parse_args()
     ret = 0
