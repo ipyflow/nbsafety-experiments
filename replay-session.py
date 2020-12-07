@@ -433,7 +433,9 @@ except Exception as e:
             for highlight_set in (live_cells, stale_cells, refresher_cells):
                 discard_highlights_after_position(highlight_set, cell_id)
             # logger.info('active pos: %d', safety.active_cell_position_idx)
+            start_time = timer()
             precheck = safety.check_and_link_multiple_cells(notebook_state, order_index_by_cell_id=cell_order_idx)
+            total_time += timer() - start_time
             live_cells |= set(precheck['fresh_cells'])
             # logger.info('live cells: %s', live_cells)
             stale_cells |= set(precheck['stale_cells'])
