@@ -245,7 +245,8 @@ def main(args, conn):
         cell_order_idx = IdentityDict()
     else:
         cell_order_idx = None
-    total_time = 0.
+    tracer_time = 0.
+    checker_time = 0.
     conn.execute("PRAGMA read_uncommitted = true;")
     cell_submissions = conn.execute(f"""
 SELECT source FROM cell_execs
@@ -393,7 +394,7 @@ except Exception as e:
 
             start_time = timer()
             this_cell_had_safety_errors = timeout_run_cell(cell_id, cell_source, safety=safety)
-            total_time += timer() - start_time
+            tracer_time += timer() - start_time
         except Exception as outer_e:
             exception_counts[outer_e.__class__.__name__] += 1
             num_exceptions += 1
@@ -435,7 +436,7 @@ except Exception as e:
             # logger.info('active pos: %d', safety.active_cell_position_idx)
             start_time = timer()
             precheck = safety.check_and_link_multiple_cells(notebook_state, order_index_by_cell_id=cell_order_idx)
-            total_time += timer() - start_time
+            checker_time += timer() - start_time
             live_cells |= set(precheck['fresh_cells'])
             # logger.info('live cells: %s', live_cells)
             stale_cells |= set(precheck['stale_cells'])
@@ -461,7 +462,9 @@ except Exception as e:
         num_cells_created=get_new_cell_id(increment=False),
         num_exceptions=num_exceptions,
         num_safety_errors=num_safety_errors,
-        wall_time=total_time,
+        tracer_time=tracer_time,
+        checker_time=checker_time,
+        wall_time=tracer_time + checker_time,
     )
     for stats_group in all_stats_groups:
         upsert_row.update(stats_group.make_dict())
