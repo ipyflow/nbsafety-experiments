@@ -331,7 +331,7 @@ ORDER BY counter ASC
     get_ipython().run_cell('import pandas as pd', silent=True)
     if args.use_nbsafety:
         import nbsafety.safety
-        safety = nbsafety.safety.NotebookSafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False)
+        safety = nbsafety.safety.NotebookSafety(cell_magic_name='_NBSAFETY_STATE', skip_unsafe=False, store_history=False)
         safety.config.backwards_cell_staleness_propagation = not args.forward_only_propagation
         logger.info('backwards staleness propagation: %s' % safety.config.backwards_cell_staleness_propagation)
         safety.config.naive_refresher_computation = args.naive_refresher_computation
