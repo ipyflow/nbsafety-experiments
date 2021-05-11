@@ -3,7 +3,7 @@
 There are two main functionalities in that this: scraping and replaying. You
 don’t need to deal with scraping if using the already-scraped
 [traces.sqlite](https://drive.google.com/file/d/1Yf_17-SESPVdyawfNbxF54VIbe4om2eX/view?usp=sharing)
-sqlite database from linked above. Besides that there are two scripts worth
+sqlite database. Besides that there are two scripts worth
 noting: one which replays a single notebook session, and one which replays
 a whole set of sessions after filtering based on some criteria
 
