@@ -35,7 +35,7 @@ from scratch. There are also some nbsafety-specific parameters:
 - `--forward-only-propagation`: used to measure utility of highlights where new
   ones are only created in later cells (spacially relative to the currently
   executed one) instead of both earlier and later cells
-- `no-nbsafety`: used to determine how much faster non-nbsafety replay was (to
+- `--no-nbsafety`: used to determine how much faster non-nbsafety replay was (to
   see what nbsafety overhead was like).
   
 When replaying these sessions, it is probably a good idea to do so in a chrooted environment
