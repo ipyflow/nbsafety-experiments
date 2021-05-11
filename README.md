@@ -12,6 +12,7 @@ a whole set of sessions after filtering based on some criteria
 `replay-session.py` replays a single notebook session (given `trace_id` and
 `session_id`, basically ids for the repository and per-repository session),
 handling things like timeouts, figuring out packages that need installation,
+coverting Python 2 to Python 3 using the `2to3` tool,
 etc. It also counts the number of exceptions that occurred during replay;
 probably worth filtering out sessions where more than ~5-10% of the cell
 executions give an exception. There’s also a bunch of ancillary stuff in there
@@ -36,3 +37,6 @@ from scratch. There are also some nbsafety-specific parameters:
   executed one) instead of both earlier and later cells
 - `no-nbsafety`: used to determine how much faster non-nbsafety replay was (to
   see what nbsafety overhead was like).
+  
+When replaying these sessions, it is probably a good idea to do so in a chrooted environment
+or docker container, since the sessions are untrusted code that sometimes do some fairly strange things.
